@@ -92,7 +92,6 @@ public class ECStripeReader {
       if (blks[i] == null) {
         throw new BlockUnavailableException("Parity block in position " + i + " of block " + blkGroup.getBlock() + " is unavailable");
       }
-      LOG.info("Parity {} is not null", i);
     }
 
     // For data blocks, we should have enough to make up the full stripe size.
