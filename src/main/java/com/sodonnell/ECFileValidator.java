@@ -66,11 +66,17 @@ public class ECFileValidator {
     Configuration conf = new Configuration();
     ECFileValidator validator = new ECFileValidator(conf);
 
-    ValidationReport res = validator.validate(args[0]);
-    if (res.isHealthy()) {
-      System.out.println("healthy " + args[0]);
-    } else {
-      System.out.println("corrupt " + args[0] + " " + StringUtils.join(res.corruptBlockGroups(), ","));
+    for (String f : args) {
+      try {
+        ValidationReport res = validator.validate(f);
+        if (res.isHealthy()) {
+          System.out.println("healthy " + f);
+        } else {
+          System.out.println("corrupt " + f + " " + StringUtils.join(res.corruptBlockGroups(), ","));
+        }
+      } catch (Exception e) {
+        System.out.println("failed " + f + " " + e.getMessage());
+      }
     }
   }
 
