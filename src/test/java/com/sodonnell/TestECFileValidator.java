@@ -83,7 +83,7 @@ public class TestECFileValidator {
     createFileOfLength(ecFile, bytes);
 
     ECFileValidator validator = new ECFileValidator(conf);
-    assertEquals(true, validator.validate("/ecfiles/ecFile"));
+    assertEquals(true, validator.validate("/ecfiles/ecFile").isHealthy());
   }
 
   @Test
@@ -95,7 +95,7 @@ public class TestECFileValidator {
     createFileOfLength(ecFile, bytes);
 
     ECFileValidator validator = new ECFileValidator(conf);
-    assertEquals(true, validator.validate("/ecfiles/ecFile"));
+    assertEquals(true, validator.validate("/ecfiles/ecFile").isHealthy());
   }
 
   @Test
@@ -108,7 +108,7 @@ public class TestECFileValidator {
     createFileOfLength(ecFile, bytes);
 
     ECFileValidator validator = new ECFileValidator(conf);
-    assertEquals(true, validator.validate("/ecfiles/ecFile"));
+    assertEquals(true, validator.validate("/ecfiles/ecFile").isHealthy());
 
     // When corrupting the parity, you need to ensure the correct checksums go into the
     // meta file. Therefore the easiest way to corrupt it, is to copy another block of
@@ -137,7 +137,12 @@ public class TestECFileValidator {
     FileUtils.copyFile(dataFile, parityFile);
     FileUtils.copyFile(dataMetaFile, parityMetaFile);
 
-    assertEquals(false, validator.validate("/ecfiles/ecFile"));
+    ValidationReport report = validator.validate("/ecfiles/ecFile");
+    assertEquals(false, report.isHealthy());
+    // first block is corrupt
+    assertEquals(blocks.get(0).getBlock().getLocalBlock().toString(), report.corruptBlockGroups().get(0));
+    // Second block is valid
+    assertEquals(blocks.get(1).getBlock().getLocalBlock().toString(), report.validBlockGroups().get(0));
   }
 
 

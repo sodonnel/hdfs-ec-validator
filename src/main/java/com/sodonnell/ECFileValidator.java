@@ -1,6 +1,7 @@
 package com.sodonnell;
 
 import com.sodonnell.exceptions.NotErasureCodedException;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
@@ -32,7 +33,7 @@ public class ECFileValidator {
     ecStripeReader = new ECStripeReader(client, conf);
   }
 
-  public boolean validate(String src) throws IOException {
+  public ValidationReport validate(String src) throws IOException {
     Path file = new Path(src);
     if (!fs.exists(file)) {
       throw new FileNotFoundException("File "+src+" does not exist");
@@ -43,31 +44,33 @@ public class ECFileValidator {
     }
 
     LOG.info("Going to validate {}", src);
+    ValidationReport report = new ValidationReport();
     LocatedBlocks fileBlocks = client.getNamenode().getBlockLocations(src, 0, stat.getLen());
     ErasureCodingPolicy ecPolicy = fileBlocks.getErasureCodingPolicy();
 
-    boolean fileValid = true;
     for (LocatedBlock b : fileBlocks.getLocatedBlocks()) {
       LOG.info("checking block {} of size {}", b.getBlock(), b.getBlockSize());
       LocatedStripedBlock sb = (LocatedStripedBlock)b;
       ByteBuffer[] stripe = ecStripeReader.readStripe(sb, ecPolicy, src);
       boolean res = ECChecker.validateParity(stripe, ecPolicy);
       if (res == false) {
-        fileValid = false;
+        report.addCorruptBlockGroup(b.getBlock().getLocalBlock().toString());
+      } else {
+        report.addValidBlockGroup(b.getBlock().getLocalBlock().toString());
       }
     }
-    return fileValid;
+    return report;
   }
 
   public static void main(String[] args) throws Exception {
     Configuration conf = new Configuration();
     ECFileValidator validator = new ECFileValidator(conf);
 
-    boolean res = validator.validate(args[0]);
-    if (res) {
-      System.out.println("The file is valid");
+    ValidationReport res = validator.validate(args[0]);
+    if (res.isHealthy()) {
+      System.out.println("healthy " + args[0]);
     } else {
-      System.out.println("This file is not valid");
+      System.out.println("corrupt " + args[0] + " " + StringUtils.join(res.corruptBlockGroups(), ","));
     }
   }
 
