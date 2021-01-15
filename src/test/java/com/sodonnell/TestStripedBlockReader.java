@@ -1,6 +1,7 @@
 package com.sodonnell;
 
 import com.sodonnell.exceptions.BlockUnavailableException;
+import com.sodonnell.exceptions.MisalignedBuffersException;
 import org.apache.commons.lang3.RandomUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
@@ -26,14 +27,16 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import static junit.framework.TestCase.assertEquals;
 import static junit.framework.TestCase.assertTrue;
 import static junit.framework.TestCase.fail;
 
-public class TestECStripeReader {
+public class TestStripedBlockReader {
 
-  private Logger LOG = LoggerFactory.getLogger(TestECStripeReader.class);
+  private Logger LOG = LoggerFactory.getLogger(TestStripedBlockReader.class);
 
   private Configuration conf;
   private MiniDFSCluster cluster;
@@ -42,6 +45,7 @@ public class TestECStripeReader {
   private ErasureCodingPolicy ecPolicy = SystemErasureCodingPolicies.getByName(policyName);
   private DistributedFileSystem fs;
   private Path ecRoot = new Path("/ecfiles");
+  private ExecutorService executor;
 
   @Before
   public void setup() throws IOException {
@@ -56,6 +60,7 @@ public class TestECStripeReader {
     client = new DFSClient(fs.getUri(), conf);
     fs.mkdirs(ecRoot);
     fs.setErasureCodingPolicy(ecRoot, policyName);
+    executor = Executors.newFixedThreadPool(ecPolicy.getNumDataUnits() + ecPolicy.getNumParityUnits());
   }
 
   @After
@@ -63,21 +68,23 @@ public class TestECStripeReader {
     if (cluster != null) {
       cluster.shutdown();
     }
+    executor.shutdown();
   }
 
   @Test
-  public void testFileWithExactStripeCanBeValidated() throws IOException {
+  public void testFileWithExactStripeCanBeValidated() throws Exception {
     Path ecFile = new Path(ecRoot, "ecFile");
     // write one full stripe
+    int stripeSize = (ecPolicy.getNumDataUnits() + ecPolicy.getNumParityUnits()) * ecPolicy.getCellSize();
     int bytes = ecPolicy.getNumDataUnits() * ecPolicy.getCellSize();
     createFileOfLength(ecFile, bytes);
 
     LocatedBlocks blocks = client.getNamenode().getBlockLocations("/ecfiles/ecFile", 0, bytes);
     LocatedStripedBlock blockGroup = (LocatedStripedBlock) blocks.getLocatedBlocks().get(0);
 
-    ECStripeReader ecStripeReader = new ECStripeReader(client, conf);
-    ByteBuffer[] buffers = ecStripeReader.readStripe(blockGroup, ecPolicy, "/ecfiles/ecFile");
-    assertEquals(buffers.length, ecPolicy.getNumDataUnits() + ecPolicy.getNumParityUnits());
+    StripedBlockReader ecStripeReader = new StripedBlockReader(client, conf, blockGroup, ecPolicy, executor);
+    ByteBuffer[] buffers = allocateBuffers(ecPolicy);
+    assertEquals(stripeSize, ecStripeReader.readNextStripe(buffers));
 
     ECValidateUtil.resetBufferPosition(buffers, 0);
     for (int i=0; i<ecPolicy.getNumDataUnits(); i++) {
@@ -88,35 +95,71 @@ public class TestECStripeReader {
       out.close();
       assertEquals(0, fbuf.compareTo(buffers[i]));
     }
+    // further read should return -1
+    ECValidateUtil.resetBufferPosition(buffers, 0);
+    assertEquals(0, ecStripeReader.readNextStripe(buffers));
+    ecStripeReader.close();
   }
 
   @Test
-  public void testFileWithMultipleStripesCanBeValidated() throws IOException {
+  public void testFileWithMultipleStripesCanBeValidated() throws Exception {
     Path ecFile = new Path(ecRoot, "ecFile");
     // write 5 full stripes plus 1 byte
+    int stripeSize = (ecPolicy.getNumDataUnits() + ecPolicy.getNumParityUnits()) * ecPolicy.getCellSize();
     int bytes = ecPolicy.getNumDataUnits() * ecPolicy.getCellSize() * 5 + 1;
     createFileOfLength(ecFile, bytes);
 
     LocatedBlocks blocks = client.getNamenode().getBlockLocations("/ecfiles/ecFile", 0, bytes);
     LocatedStripedBlock blockGroup = (LocatedStripedBlock) blocks.getLocatedBlocks().get(0);
 
-    ECStripeReader ecStripeReader = new ECStripeReader(client, conf);
-    ByteBuffer[] buffers = ecStripeReader.readStripe(blockGroup, ecPolicy, "/ecfiles/ecFile");
-    assertEquals(buffers.length, ecPolicy.getNumDataUnits() + ecPolicy.getNumParityUnits());
+    StripedBlockReader ecStripeReader = new StripedBlockReader(client, conf, blockGroup, ecPolicy, executor);
 
-    ECValidateUtil.resetBufferPosition(buffers, 0);
-    for (int i=0; i<ecPolicy.getNumDataUnits(); i++) {
-      FSDataInputStream out = fs.open(ecFile);
-      ByteBuffer fbuf = ByteBuffer.allocate(ecPolicy.getCellSize());
-      out.read(i*ecPolicy.getCellSize(), fbuf);
-      fbuf.position(0);
-      out.close();
-      assertEquals(0, fbuf.compareTo(buffers[i]));
+    FSDataInputStream out = fs.open(ecFile);
+    // read the 5 stripes which should be full
+    for (int j=0; j<5; j++) {
+      ByteBuffer[] buffers = allocateBuffers(ecPolicy);
+      assertEquals(stripeSize, ecStripeReader.readNextStripe(buffers));
+      for (int i = 0; i < ecPolicy.getNumDataUnits(); i++) {
+        ByteBuffer fbuf = ByteBuffer.allocate(ecPolicy.getCellSize());
+        out.read(fbuf);
+        fbuf.position(0);
+        buffers[i].position(0);
+        assertEquals(0, fbuf.compareTo(buffers[i]));
+      }
+      for (int i = ecPolicy.getNumDataUnits(); i < ecPolicy.getNumDataUnits() + ecPolicy.getNumParityUnits(); i++) {
+        assertEquals(0, buffers[i].remaining());
+      }
     }
+
+    // The 6th stripe has only a single byte
+    ByteBuffer[] buffers = allocateBuffers(ecPolicy);
+    // 1 byte in the data, 1 byte from each of the 3 parity
+    assertEquals(4, ecStripeReader.readNextStripe(buffers));
+    assertEquals(1, buffers[0].position());
+    assertEquals(0, buffers[1].position());
+    assertEquals(0, buffers[2].position());
+    assertEquals(0, buffers[3].position());
+    assertEquals(0, buffers[4].position());
+    assertEquals(0, buffers[5].position());
+    // Parity should all be at 1
+    assertEquals(1, buffers[6].position());
+    assertEquals(1, buffers[7].position());
+    assertEquals(1, buffers[8].position());
+
+    // Validate the last byte from the file matches the byte in the buffer
+    ByteBuffer fbuf = ByteBuffer.allocate(ecPolicy.getCellSize());
+    out.read(fbuf);
+    assertEquals(0, fbuf.compareTo(buffers[0]));
+
+    // Finally, trying to read another stripe gives EOF
+    buffers = allocateBuffers(ecPolicy);
+    assertEquals(0, ecStripeReader.readNextStripe(buffers));
+    out.close();
+    ecStripeReader.close();
   }
 
   @Test
-  public void testStripeWithLessThanCellSizeData() throws IOException {
+  public void testStripeWithLessThanCellSizeData() throws Exception {
     Path ecFile = new Path(ecRoot, "ecFile");
     // Going to write less than one cell.
     int bytes = 1024;
@@ -128,8 +171,9 @@ public class TestECStripeReader {
     // The size of the Striped Block should be reported as the data length within it
     assertEquals(bytes, blockGroup.getBlockSize());
 
-    ECStripeReader ecStripeReader = new ECStripeReader(client, conf);
-    ByteBuffer[] buffers = ecStripeReader.readStripe(blockGroup, ecPolicy, "/ecfiles/ecFile");
+    ByteBuffer[] buffers = allocateBuffers(ecPolicy);
+    StripedBlockReader ecStripeReader = new StripedBlockReader(client, conf, blockGroup, ecPolicy, executor);
+    assertTrue(ecStripeReader.readNextStripe(buffers) > 0);
 
     // We expect to receive a full set of buffers. However only the first buffer,
     // and the parity buffers will have any data in them. The others should have
@@ -144,6 +188,8 @@ public class TestECStripeReader {
     assertEquals(1024, buffers[6].position());
     assertEquals(1024, buffers[7].position());
     assertEquals(1024, buffers[8].position());
+
+    ecStripeReader.close();
 
     RSRawEncoder encoder = new RSRawEncoder(new ErasureCoderOptions(ecPolicy.getNumDataUnits(), ecPolicy.getNumParityUnits()));
 
@@ -162,7 +208,7 @@ public class TestECStripeReader {
   }
 
   @Test
-  public void testStripeWithMoreThanCellSizeButLessThanStripeSizeData() throws IOException {
+  public void testStripeWithMoreThanCellSizeButLessThanStripeSizeData() throws Exception {
     Path ecFile = new Path(ecRoot, "ecFile");
     // 2 full cells plus one byte
     int bytes = ecPolicy.getCellSize()*2+1;
@@ -174,8 +220,10 @@ public class TestECStripeReader {
     // The size of the Striped Block should be reported as the data length within it
     assertEquals(bytes, blockGroup.getBlockSize());
 
-    ECStripeReader ecStripeReader = new ECStripeReader(client, conf);
-    ByteBuffer[] buffers = ecStripeReader.readStripe(blockGroup, ecPolicy, "/ecfiles/ecFile");
+    ByteBuffer[] buffers = allocateBuffers(ecPolicy);
+    StripedBlockReader ecStripeReader = new StripedBlockReader(client, conf, blockGroup, ecPolicy, executor);
+    int expectedRead = bytes + ecPolicy.getNumParityUnits() * ecPolicy.getCellSize();
+    assertEquals(expectedRead, ecStripeReader.readNextStripe(buffers));
 
     // We expect to receive a full set of buffers. However only the first buffer,
     // and the parity buffers will have any data in them. The others should have
@@ -190,6 +238,8 @@ public class TestECStripeReader {
     assertEquals(ecPolicy.getCellSize(), buffers[6].position());
     assertEquals(ecPolicy.getCellSize(), buffers[7].position());
     assertEquals(ecPolicy.getCellSize(), buffers[8].position());
+
+    ecStripeReader.close();
 
     RSRawEncoder encoder = new RSRawEncoder(new ErasureCoderOptions(ecPolicy.getNumDataUnits(), ecPolicy.getNumParityUnits()));
 
@@ -231,9 +281,8 @@ public class TestECStripeReader {
     blocks = client.getNamenode().getBlockLocations("/ecfiles/ecFile", 0, bytes);
     blockGroup = (LocatedStripedBlock) blocks.getLocatedBlocks().get(0);
 
-    ECStripeReader ecStripeReader = new ECStripeReader(client, conf);
     try {
-      ByteBuffer[] buffers = ecStripeReader.readStripe(blockGroup, ecPolicy, "/ecfiles/ecFile");
+      StripedBlockReader ecStripeReader = new StripedBlockReader(client, conf, blockGroup, ecPolicy, executor);
       fail("Expected Exception to be thrown");
     } catch (BlockUnavailableException e) {
       assertTrue(e.getMessage().matches("^Parity block in position.*is unavailable"));
@@ -263,13 +312,52 @@ public class TestECStripeReader {
     blocks = client.getNamenode().getBlockLocations("/ecfiles/ecFile", 0, bytes);
     blockGroup = (LocatedStripedBlock) blocks.getLocatedBlocks().get(0);
 
-    ECStripeReader ecStripeReader = new ECStripeReader(client, conf);
     try {
-      ByteBuffer[] buffers = ecStripeReader.readStripe(blockGroup, ecPolicy, "/ecfiles/ecFile");
+      StripedBlockReader ecStripeReader = new StripedBlockReader(client, conf, blockGroup, ecPolicy, executor);
       fail("Expected Exception to be thrown");
     } catch (BlockUnavailableException e) {
       assertTrue(e.getMessage().matches("^Data block in position.*is unavailable"));
     }
+  }
+
+  @Test
+  public void testThrowsOnInvalidBuffers() throws Exception {
+    Path ecFile = new Path(ecRoot, "ecFile");
+    // write one full stripe
+    int bytes = ecPolicy.getNumDataUnits() * ecPolicy.getCellSize();
+    createFileOfLength(ecFile, bytes);
+
+    LocatedBlocks blocks = client.getNamenode().getBlockLocations("/ecfiles/ecFile", 0, bytes);
+    LocatedStripedBlock blockGroup = (LocatedStripedBlock) blocks.getLocatedBlocks().get(0);
+
+
+    StripedBlockReader ecStripeReader = new StripedBlockReader(client, conf, blockGroup, ecPolicy, executor);
+    try {
+      ByteBuffer[] buffers = ECValidateUtil.allocateBuffers(ecPolicy.getNumDataUnits(), ecPolicy.getCellSize());
+      ecStripeReader.readNextStripe(buffers);
+      fail("Expected Exception to be thrown");
+    } catch (MisalignedBuffersException e) {
+      assertTrue(e.getMessage().matches("^Insufficient buffers.*"));
+    }
+
+    try {
+      ByteBuffer[] buffers = allocateBuffers(ecPolicy);
+      buffers[1] = null;
+      ecStripeReader.readNextStripe(buffers);
+      fail("Expected Exception to be thrown");
+    } catch (MisalignedBuffersException e) {
+      assertTrue(e.getMessage().matches("^A buffer is null.*"));
+    }
+
+    try {
+      ByteBuffer[] buffers = allocateBuffers(ecPolicy);
+      buffers[1].position(100);
+      ecStripeReader.readNextStripe(buffers);
+      fail("Expected Exception to be thrown");
+    } catch (MisalignedBuffersException e) {
+      assertTrue(e.getMessage().matches("^A buffer has less space than the EC Cell size.*"));
+    }
+    ecStripeReader.close();
   }
 
   private void createFileOfLength(Path dest, int bytes) throws IOException {
@@ -282,5 +370,10 @@ public class TestECStripeReader {
     } finally {
       stream.close();
     }
+  }
+
+  private ByteBuffer[] allocateBuffers(ErasureCodingPolicy ecPolicy) {
+    return ECValidateUtil.allocateBuffers(
+        ecPolicy.getNumDataUnits() + ecPolicy.getNumParityUnits(), ecPolicy.getCellSize());
   }
 }

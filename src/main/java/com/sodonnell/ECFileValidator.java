@@ -8,6 +8,7 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hdfs.DFSClient;
 import org.apache.hadoop.hdfs.protocol.ErasureCodingPolicy;
+import org.apache.hadoop.hdfs.protocol.ErasureCodingPolicyInfo;
 import org.apache.hadoop.hdfs.protocol.LocatedBlock;
 import org.apache.hadoop.hdfs.protocol.LocatedBlocks;
 import org.apache.hadoop.hdfs.protocol.LocatedStripedBlock;
@@ -17,6 +18,8 @@ import org.slf4j.LoggerFactory;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class ECFileValidator {
 
@@ -24,16 +27,27 @@ public class ECFileValidator {
   private Configuration conf;
   private DFSClient client;
   private FileSystem fs;
-  private ECStripeReader ecStripeReader;
+  private ExecutorService executor;
 
   public ECFileValidator(Configuration conf) throws Exception {
     this.conf = conf;
     fs = FileSystem.get(conf);
     client = new DFSClient(fs.getUri(), conf);
-    ecStripeReader = new ECStripeReader(client, conf);
+    createExecutor();
   }
 
-  public ValidationReport validate(String src) throws IOException {
+  private void createExecutor() throws IOException {
+    int threads = 0;
+    for (ErasureCodingPolicyInfo ecp : client.getErasureCodingPolicies()) {
+      LOG.info("EC Policy {} exists", ecp.getPolicy().getName());
+      int policyThreads = ecp.getPolicy().getNumDataUnits() + ecp.getPolicy().getNumParityUnits();
+      threads = Math.max(threads, policyThreads);
+    }
+    LOG.info("Created reader thread pool with {} threads", threads);
+    executor = Executors.newFixedThreadPool(threads);
+  }
+
+  public ValidationReport validate(String src) throws Exception {
     Path file = new Path(src);
     if (!fs.exists(file)) {
       throw new FileNotFoundException("File "+src+" does not exist");
@@ -51,12 +65,16 @@ public class ECFileValidator {
     for (LocatedBlock b : fileBlocks.getLocatedBlocks()) {
       LOG.info("checking block {} of size {}", b.getBlock(), b.getBlockSize());
       LocatedStripedBlock sb = (LocatedStripedBlock)b;
-      ByteBuffer[] stripe = ecStripeReader.readStripe(sb, ecPolicy, src);
-      boolean res = ECChecker.validateParity(stripe, ecPolicy);
-      if (res == false) {
-        report.addCorruptBlockGroup(b.getBlock().getLocalBlock().toString());
-      } else {
-        report.addValidBlockGroup(b.getBlock().getLocalBlock().toString());
+      try (StripedBlockReader br = new StripedBlockReader(client, conf, sb, ecPolicy, executor)) {
+        ByteBuffer[] stripe = ECValidateUtil.allocateBuffers(
+            ecPolicy.getNumDataUnits() + ecPolicy.getNumParityUnits(), ecPolicy.getCellSize());
+        br.readNextStripe(stripe);
+        boolean res = ECChecker.validateParity(stripe, ecPolicy);
+        if (res == false) {
+          report.addCorruptBlockGroup(b.getBlock().getLocalBlock().toString());
+        } else {
+          report.addValidBlockGroup(b.getBlock().getLocalBlock().toString());
+        }
       }
     }
     return report;

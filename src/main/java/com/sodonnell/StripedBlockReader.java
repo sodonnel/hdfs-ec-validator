@@ -1,6 +1,7 @@
 package com.sodonnell;
 
 import com.sodonnell.exceptions.BlockUnavailableException;
+import com.sodonnell.exceptions.MisalignedBuffersException;
 import com.sodonnell.exceptions.UnExpectedBlockException;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.StorageType;
@@ -24,29 +25,122 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
+import java.util.ArrayDeque;
+import java.util.Queue;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
-public class ECStripeReader {
+/**
+ * Read data from a striped block into byte buffers.
+ */
 
-  private Logger LOG = LoggerFactory.getLogger(ECStripeReader.class);
+public class StripedBlockReader implements AutoCloseable {
+
+  private final static Logger LOG = LoggerFactory.getLogger(StripedBlockReader.class);
+
+  private DFSClient dfsClient;
   private Configuration conf;
-  private DFSClient client;
+  private LocatedStripedBlock block;
+  private ErasureCodingPolicy ecPolicy;
+  private ExecutorService executor;
+  private BlockReader[] blockReaders;
 
-  ECStripeReader(DFSClient client, Configuration conf) {
-    this.client = client;
+  public StripedBlockReader(DFSClient dfsClient, Configuration conf, LocatedStripedBlock block,
+      ErasureCodingPolicy ecPolicy, ExecutorService executor) throws IOException {
+    this.dfsClient = dfsClient;
     this.conf = conf;
+    this.block = block;
+    this.ecPolicy = ecPolicy;
+    this.executor = executor;
+
+    createReaders();
   }
 
-  // TODO - accept buffer and reuse them.
-  public ByteBuffer[] readStripe(LocatedStripedBlock block, ErasureCodingPolicy ecPolicy, String path)
-      throws IOException {
-    LOG.debug("The striped block size is given as {}", block.getBlockSize());
+  public void close() {
+    for (BlockReader r : blockReaders) {
+      try {
+        if (r != null) {
+          r.close();
+        }
+      } catch (IOException e) {
+        LOG.warn("Failed to close BlockReader {}", r, e);
+      }
+    }
+  }
+
+  /**
+   * Reads a stripe of data for the block into given buffer array. The buffers
+   * should have the ECPolicy.cellSize() of available space to read the data into.
+   * Data is read from each block until it fills the buffers.
+   * Data will be read into the buffer until the buffer is full, or there is
+   * no further data in the block.
+   * This routine will return the total bytes read if any data was successfully read,
+   * or zero indicating EOF.
+   * After EOF is reached, further calls with continue to return zero.
+   * This means that if a previous read consumed all available data, you must
+   * make a further call to reach EOF.
+   * @param buffers
+   * @return 0 if EOF or the total bytes read from all blocks if any data was read
+   */
+  public int readNextStripe(ByteBuffer[] buffers) throws Exception {
+    validateBuffers(buffers);
+    Queue<Future<Integer>> pendingReads = new ArrayDeque();
+    for (int i=0; i<blockReaders.length; i++) {
+      final int ind = i;
+      if (blockReaders[ind] == null) {
+        continue;
+      }
+      final ByteBuffer buf = buffers[i];
+      final BlockReader reader = blockReaders[i];
+      pendingReads.add(executor.submit(() -> {
+        int totalRead = 0;
+        while(buf.hasRemaining()) {
+          int read = reader.read(buf);
+          if (read < 0) {
+            if (totalRead > 0) {
+              return totalRead;
+            } else {
+              return -1;
+            }
+          } else {
+            totalRead += read;
+          }
+        }
+        return totalRead;
+      }));
+    }
+
+    int totalRead = 0;
+    while(!pendingReads.isEmpty()) {
+      Future<Integer> f = pendingReads.poll();
+      try {
+        // If any future returns zero, then the return value will be zero.
+        // Only when all futures return -1, should we return -1.
+        // TODO - should we timeout here, or rely on the underlying HDFS Client timeouts?
+        int read = f.get(10, TimeUnit.SECONDS);
+        if (read > 0) {
+          totalRead += read;
+        }
+      } catch (TimeoutException e) {
+        f.cancel(true);
+        throw e;
+      } catch (InterruptedException e) {
+        throw e;
+      } catch (ExecutionException e) {
+        throw e;
+      }
+    }
+    return totalRead;
+  }
+
+  private void createReaders() throws IOException {
     final LocatedBlock[] blks = StripedBlockUtil.parseStripedBlockGroup(
         block, ecPolicy.getCellSize(), ecPolicy.getNumDataUnits(), ecPolicy.getNumParityUnits());
-    ByteBuffer[] buffers = ECValidateUtil.allocateBuffers(
-        ecPolicy.getNumDataUnits() + ecPolicy.getNumParityUnits(), ecPolicy.getCellSize());
-
     ensureAllBlocksPresent(blks, ecPolicy, block);
-
+    blockReaders = new BlockReader[ecPolicy.getNumDataUnits() +ecPolicy.getNumParityUnits()];
     for (int i=0; i<ecPolicy.getNumDataUnits() + ecPolicy.getNumParityUnits(); i++) {
       BlockReader br = null;
       try {
@@ -56,24 +150,27 @@ public class ECStripeReader {
           continue;
         }
         LOG.debug("Block at index {} is of length {}", i, blk.getBlockSize());
-        long bytesToRead = blk.getBlockSize() < ecPolicy.getCellSize() ? blk.getBlockSize() : ecPolicy.getCellSize();
-        br = getBlockReader(client, path, conf, blks[i], 0, bytesToRead);
-        while(buffers[i].hasRemaining()) {
-          int read = br.read(buffers[i]);
-          if (read < 0) {
-            break;
-          }
-        }
+        blockReaders[i] = getBlockReader(dfsClient, conf, blk, 0, blk.getBlockSize());
       } catch (IOException e) {
-        LOG.error("Failed to read block {}", blks[i], e);
+        // TODO
+        LOG.error("Error creating the block reader", e);
         throw e;
-      } finally {
-        if (br != null) {
-          br.close();
-        }
       }
     }
-    return buffers;
+  }
+
+  private void validateBuffers(ByteBuffer[] buffers) throws IOException {
+    if (buffers.length != ecPolicy.getNumDataUnits() + ecPolicy.getNumParityUnits()) {
+      throw new MisalignedBuffersException("Insufficient buffers (" + buffers.length +") for EC Policy " + ecPolicy.getName());
+    }
+    for (ByteBuffer b : buffers) {
+      if (b == null) {
+        throw new MisalignedBuffersException("A buffer is null");
+      }
+      if (b.remaining() != ecPolicy.getCellSize()) {
+        throw new MisalignedBuffersException("A buffer has less space than the EC Cell size of " + ecPolicy.getCellSize());
+      }
+    }
   }
 
   /**
@@ -112,7 +209,7 @@ public class ECStripeReader {
     }
   }
 
-  private BlockReader getBlockReader(DFSClient dfsClient, String src, Configuration conf, LocatedBlock targetBlock,
+  private BlockReader getBlockReader(DFSClient dfsClient, Configuration conf, LocatedBlock targetBlock,
                                      long offsetInBlock, long length) throws IOException {
 
     StorageType[] storageTypes = targetBlock.getStorageTypes();
@@ -136,7 +233,6 @@ public class ECStripeReader {
         setRemotePeerFactory(dfsClient).
         setDatanodeInfo(datanode).
         setStorageType(storageTypes[0]).
-        setFileName(src).
         setBlock(blk).
         setBlockToken(accessToken).
         setStartOffset(offsetInBlock).
