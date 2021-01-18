@@ -41,12 +41,13 @@ public class StripedBlockReader implements AutoCloseable {
 
   private final static Logger LOG = LoggerFactory.getLogger(StripedBlockReader.class);
 
-  private DFSClient dfsClient;
-  private Configuration conf;
-  private LocatedStripedBlock block;
-  private ErasureCodingPolicy ecPolicy;
-  private ExecutorService executor;
-  private BlockReader[] blockReaders;
+  private final DFSClient dfsClient;
+  private final Configuration conf;
+  private final LocatedStripedBlock block;
+  private final LocatedBlock[] locatedBlocks;
+  private final ErasureCodingPolicy ecPolicy;
+  private final ExecutorService executor;
+  private final BlockReader[] blockReaders;
 
   public StripedBlockReader(DFSClient dfsClient, Configuration conf, LocatedStripedBlock block,
       ErasureCodingPolicy ecPolicy, ExecutorService executor) throws IOException {
@@ -56,7 +57,11 @@ public class StripedBlockReader implements AutoCloseable {
     this.ecPolicy = ecPolicy;
     this.executor = executor;
 
-    createReaders();
+    this.locatedBlocks = StripedBlockUtil.parseStripedBlockGroup(
+        block, ecPolicy.getCellSize(), ecPolicy.getNumDataUnits(), ecPolicy.getNumParityUnits());
+    ensureAllBlocksPresent();
+    blockReaders = new BlockReader[ecPolicy.getNumDataUnits() + ecPolicy.getNumParityUnits()];
+    ensureAllBlocksPresent();
   }
 
   public void close() {
@@ -90,15 +95,19 @@ public class StripedBlockReader implements AutoCloseable {
     Queue<Future<Integer>> pendingReads = new ArrayDeque();
     for (int i=0; i<blockReaders.length; i++) {
       final int ind = i;
-      if (blockReaders[ind] == null) {
+      if (locatedBlocks[ind] == null) {
         continue;
       }
       final ByteBuffer buf = buffers[i];
-      final BlockReader reader = blockReaders[i];
+      final LocatedBlock blk = locatedBlocks[i];
+
       pendingReads.add(executor.submit(() -> {
+        if (blockReaders[ind] == null) {
+          blockReaders[ind] = getBlockReader(dfsClient, conf, blk, 0, blk.getBlockSize());
+        }
         int totalRead = 0;
         while(buf.hasRemaining()) {
-          int read = reader.read(buf);
+          int read = blockReaders[ind].read(buf);
           if (read < 0) {
             if (totalRead > 0) {
               return totalRead;
@@ -136,29 +145,6 @@ public class StripedBlockReader implements AutoCloseable {
     return totalRead;
   }
 
-  private void createReaders() throws IOException {
-    final LocatedBlock[] blks = StripedBlockUtil.parseStripedBlockGroup(
-        block, ecPolicy.getCellSize(), ecPolicy.getNumDataUnits(), ecPolicy.getNumParityUnits());
-    ensureAllBlocksPresent(blks, ecPolicy, block);
-    blockReaders = new BlockReader[ecPolicy.getNumDataUnits() +ecPolicy.getNumParityUnits()];
-    for (int i=0; i<ecPolicy.getNumDataUnits() + ecPolicy.getNumParityUnits(); i++) {
-      BlockReader br = null;
-      try {
-        LocatedBlock blk = blks[i];
-        if (blk == null) {
-          LOG.debug("Block at index {} is null", i);
-          continue;
-        }
-        LOG.debug("Block at index {} is of length {}", i, blk.getBlockSize());
-        blockReaders[i] = getBlockReader(dfsClient, conf, blk, 0, blk.getBlockSize());
-      } catch (IOException e) {
-        // TODO
-        LOG.error("Error creating the block reader", e);
-        throw e;
-      }
-    }
-  }
-
   private void validateBuffers(ByteBuffer[] buffers) throws IOException {
     if (buffers.length != ecPolicy.getNumDataUnits() + ecPolicy.getNumParityUnits()) {
       throw new MisalignedBuffersException("Insufficient buffers (" + buffers.length +") for EC Policy " + ecPolicy.getName());
@@ -178,33 +164,30 @@ public class StripedBlockReader implements AutoCloseable {
    * we need to check for null blocks in the the LocatedBlocks. However if the block
    * is less than the stripe width, then we expect to have some null blocks.
    * Parity blocks should never be null.
-   * @param blks
-   * @param ecPolicy
-   * @param blkGroup
    */
-  private void ensureAllBlocksPresent(LocatedBlock[] blks, ErasureCodingPolicy ecPolicy, LocatedStripedBlock blkGroup)
+  private void ensureAllBlocksPresent()
       throws BlockUnavailableException, UnExpectedBlockException {
     // All parity blocks should always be present
     for (int i=ecPolicy.getNumDataUnits(); i<ecPolicy.getNumDataUnits() + ecPolicy.getNumParityUnits(); i++) {
-      if (blks[i] == null) {
-        throw new BlockUnavailableException("Parity block in position " + i + " of block " + blkGroup.getBlock() + " is unavailable");
+      if (locatedBlocks[i] == null) {
+        throw new BlockUnavailableException("Parity block in position " + i + " of block " + block.getBlock() + " is unavailable");
       }
     }
 
     // For data blocks, we should have enough to make up the full stripe size.
     // Eg if block group is 1.5MB, then we expect 2 blocks (stripe size of 1MB)
-    int expectedDataBlocks = (int)Math.ceil((double)blkGroup.getBlockSize() / ecPolicy.getCellSize());
+    int expectedDataBlocks = (int)Math.ceil((double)block.getBlockSize() / ecPolicy.getCellSize());
     if (expectedDataBlocks > ecPolicy.getNumDataUnits()) {
       expectedDataBlocks = ecPolicy.getNumDataUnits();
     }
     for (int i=0; i<expectedDataBlocks; i++) {
-      if (blks[i] == null) {
-        throw new BlockUnavailableException("Data block in position " + i + " of block " + blkGroup.getBlock() + " is unavailable");
+      if (locatedBlocks[i] == null) {
+        throw new BlockUnavailableException("Data block in position " + i + " of block " + block.getBlock() + " is unavailable");
       }
     }
     for (int i=expectedDataBlocks; i<ecPolicy.getNumDataUnits(); i++) {
-      if (blks[i] != null) {
-        throw new UnExpectedBlockException("Data block in position " + i + " of block " + blkGroup.getBlock() + " is present, but should not be");
+      if (locatedBlocks[i] != null) {
+        throw new UnExpectedBlockException("Data block in position " + i + " of block " + block.getBlock() + " is present, but should not be");
       }
     }
   }
@@ -241,8 +224,8 @@ public class StripedBlockReader implements AutoCloseable {
         setLength(length).
         setAllowShortCircuitLocalReads(false).
         setClientCacheContext(dfsClient.getClientContext()).
-        setUserGroupInformation(UserGroupInformation.getCurrentUser()). //dfsClient.ugi).
-        setConfiguration(conf). //dfsClient.getConfiguration()).
+        setUserGroupInformation(UserGroupInformation.getCurrentUser()).
+        setConfiguration(conf).
         setCachingStrategy(CachingStrategy.newDefaultStrategy()).
         build();
   }
