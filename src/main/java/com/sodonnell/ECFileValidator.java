@@ -47,7 +47,7 @@ public class ECFileValidator {
     executor = Executors.newFixedThreadPool(threads);
   }
 
-  public ValidationReport validate(String src) throws Exception {
+  public ValidationReport validate(String src, boolean checkOnlyFirstStripe) throws Exception {
     Path file = new Path(src);
     if (!fs.exists(file)) {
       throw new FileNotFoundException("File "+src+" does not exist");
@@ -66,14 +66,27 @@ public class ECFileValidator {
       LOG.info("checking block {} of size {}", b.getBlock(), b.getBlockSize());
       LocatedStripedBlock sb = (LocatedStripedBlock)b;
       try (StripedBlockReader br = new StripedBlockReader(client, conf, sb, ecPolicy, executor)) {
-        ByteBuffer[] stripe = ECValidateUtil.allocateBuffers(
-            ecPolicy.getNumDataUnits() + ecPolicy.getNumParityUnits(), ecPolicy.getCellSize());
-        br.readNextStripe(stripe);
-        boolean res = ECChecker.validateParity(stripe, ecPolicy);
-        if (res == false) {
-          report.addCorruptBlockGroup(b.getBlock().getLocalBlock().toString());
+        int stripeNum = 0;
+        boolean corrupt = false;
+        while(true) {
+          ByteBuffer[] stripe = ECValidateUtil.allocateBuffers(
+              ecPolicy.getNumDataUnits() + ecPolicy.getNumParityUnits(), ecPolicy.getCellSize());
+          if (br.readNextStripe(stripe) == 0) {
+            break;
+          }
+          stripeNum ++;
+          if (!ECChecker.validateParity(stripe, ecPolicy)) {
+            corrupt = true;
+            break;
+          }
+          if (checkOnlyFirstStripe) {
+            break;
+          }
+        }
+        if (corrupt) {
+          report.addCorruptBlockGroup(b.getBlock().getLocalBlock().toString(), stripeNum);
         } else {
-          report.addValidBlockGroup(b.getBlock().getLocalBlock().toString());
+          report.addValidBlockGroup(b.getBlock().getLocalBlock().toString(), stripeNum);
         }
       }
     }
@@ -86,7 +99,7 @@ public class ECFileValidator {
 
     for (String f : args) {
       try {
-        ValidationReport res = validator.validate(f);
+        ValidationReport res = validator.validate(f, true);
         if (res.isHealthy()) {
           System.out.println("healthy " + f);
         } else {

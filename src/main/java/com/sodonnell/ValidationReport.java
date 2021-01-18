@@ -7,22 +7,22 @@ import java.util.List;
 
 public class ValidationReport {
 
-  private final List<String> validBlockGroups = new ArrayList<>();
-  private final List<String> corruptBlockGroups = new ArrayList<>();
+  private final List<Entry> validBlockGroups = new ArrayList<>();
+  private final List<Entry> corruptBlockGroups = new ArrayList<>();
 
-  public void addCorruptBlockGroup(String blkGroup) {
-    corruptBlockGroups.add(blkGroup);
+  public void addCorruptBlockGroup(String blkGroup, int stripesChecked) {
+    corruptBlockGroups.add(new Entry(blkGroup, stripesChecked));
   }
 
-  public void addValidBlockGroup(String blkGroup) {
-    validBlockGroups.add(blkGroup);
+  public void addValidBlockGroup(String blkGroup, int stripesChecked) {
+    validBlockGroups.add(new Entry(blkGroup, stripesChecked));
   }
 
-  public List<String> validBlockGroups() {
+  public List<Entry> validBlockGroups() {
     return UnmodifiableList.decorate(validBlockGroups);
   }
 
-  public List<String> corruptBlockGroups() {
+  public List<Entry> corruptBlockGroups() {
     return UnmodifiableList.decorate(corruptBlockGroups);
   }
 
@@ -32,6 +32,31 @@ public class ValidationReport {
 
   public boolean isHealthy() {
     return corruptBlockGroups.size() == 0;
+  }
+
+  public static class Entry {
+
+    private String block;
+    private int stripesChecked;
+
+    public Entry(String block, int stripesChecked) {
+      this.block = block;
+      this.stripesChecked = stripesChecked;
+    }
+
+    public String block() {
+      return block;
+    }
+
+    public int stripesChecked() {
+      return stripesChecked;
+    }
+
+    @Override
+    public String toString() {
+      return block;
+    }
+
   }
 
 }

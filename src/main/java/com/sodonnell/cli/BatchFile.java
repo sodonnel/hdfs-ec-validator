@@ -2,14 +2,12 @@ package com.sodonnell.cli;
 
 import com.sodonnell.ECFileValidator;
 import com.sodonnell.ValidationReport;
-import com.sodonnell.exceptions.NotErasureCodedException;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.conf.Configuration;
 
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileNotFoundException;
 import java.io.InputStreamReader;
 import java.io.PrintStream;
 
@@ -47,7 +45,7 @@ public class BatchFile {
     while ((l = br.readLine()) != null)   {
       // Print the content on the console
       try {
-        ValidationReport res = validator.validate(l);
+        ValidationReport res = validator.validate(l, true);
         if (res.isHealthy()) {
           out.println("healthy " + l);
         } else {

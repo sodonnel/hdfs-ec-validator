@@ -26,6 +26,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.RandomAccessFile;
 
 import static junit.framework.TestCase.assertEquals;
 
@@ -83,7 +84,11 @@ public class TestECFileValidator {
     createFileOfLength(ecFile, bytes);
 
     ECFileValidator validator = new ECFileValidator(conf);
-    assertEquals(true, validator.validate("/ecfiles/ecFile").isHealthy());
+    ValidationReport report = validator.validate("/ecfiles/ecFile", true);
+    assertEquals(true, report.isHealthy());
+    assertEquals(1, report.validBlockGroups().size());
+    assertEquals(1, report.validBlockGroups().get(0).stripesChecked());
+    assertEquals(0, report.corruptBlockGroups().size());
   }
 
   @Test
@@ -95,7 +100,18 @@ public class TestECFileValidator {
     createFileOfLength(ecFile, bytes);
 
     ECFileValidator validator = new ECFileValidator(conf);
-    assertEquals(true, validator.validate("/ecfiles/ecFile").isHealthy());
+    ValidationReport report = validator.validate("/ecfiles/ecFile", true);
+    assertEquals(true, report.isHealthy());
+    assertEquals(2, report.validBlockGroups().size());
+    assertEquals(1, report.validBlockGroups().get(0).stripesChecked());
+    assertEquals(1, report.validBlockGroups().get(1).stripesChecked());
+
+    // validate again, this time checking all stripes.
+    report = validator.validate("/ecfiles/ecFile", false);
+    assertEquals(true, report.isHealthy());
+    assertEquals(2, report.validBlockGroups().size());
+    assertEquals(2, report.validBlockGroups().get(0).stripesChecked());
+    assertEquals(1, report.validBlockGroups().get(1).stripesChecked());
   }
 
   @Test
@@ -108,7 +124,7 @@ public class TestECFileValidator {
     createFileOfLength(ecFile, bytes);
 
     ECFileValidator validator = new ECFileValidator(conf);
-    assertEquals(true, validator.validate("/ecfiles/ecFile").isHealthy());
+    assertEquals(true, validator.validate("/ecfiles/ecFile", true).isHealthy());
 
     // When corrupting the parity, you need to ensure the correct checksums go into the
     // meta file. Therefore the easiest way to corrupt it, is to copy another block of
@@ -137,12 +153,67 @@ public class TestECFileValidator {
     FileUtils.copyFile(dataFile, parityFile);
     FileUtils.copyFile(dataMetaFile, parityMetaFile);
 
-    ValidationReport report = validator.validate("/ecfiles/ecFile");
+    ValidationReport report = validator.validate("/ecfiles/ecFile", true);
     assertEquals(false, report.isHealthy());
     // first block is corrupt
-    assertEquals(blocks.get(0).getBlock().getLocalBlock().toString(), report.corruptBlockGroups().get(0));
+    assertEquals(blocks.get(0).getBlock().getLocalBlock().toString(), report.corruptBlockGroups().get(0).block());
     // Second block is valid
-    assertEquals(blocks.get(1).getBlock().getLocalBlock().toString(), report.validBlockGroups().get(0));
+    assertEquals(blocks.get(1).getBlock().getLocalBlock().toString(), report.validBlockGroups().get(0).block());
+  }
+
+  @Test
+  public void testCorruptionNotInFirstStripeDetected() throws Exception {
+    //  Not enough replicas was chosen. Reason: {NODE_TOO_BUSY=2}
+    Path ecFile = new Path(ecRoot, "ecFile");
+
+    // write 3 full stripes - that will be two blocks (block size of 2MB)
+    int bytes = ecPolicy.getNumDataUnits() * ecPolicy.getCellSize() * 3;
+    createFileOfLength(ecFile, bytes);
+
+    // When corrupting the parity, you need to ensure the correct checksums go into the
+    // meta file. Therefore the easiest way to corrupt it, is to copy another block of
+    // the same size in its place - ie the first datablock. So we find the location of
+    // the first parity, and the first datablock and then copy the datablock over the
+    // parity.
+    LocatedBlocks blocks = client.getNamenode().getBlockLocations("/ecfiles/ecFile", 0, bytes);
+    LocatedStripedBlock blockGroup = (LocatedStripedBlock) blocks.getLocatedBlocks().get(0);
+    final LocatedBlock[] blks = StripedBlockUtil.parseStripedBlockGroup(
+        blockGroup, ecPolicy.getCellSize(), ecPolicy.getNumDataUnits(), ecPolicy.getNumParityUnits());
+
+    LocatedBlock parityLb = blks[ecPolicy.getNumDataUnits()+1];
+    int DNPort = parityLb.getLocations()[0].getIpcPort();
+    int DNIndex = findDNIndex(DNPort);
+
+    File parityFile = cluster.getBlockFile(DNIndex, parityLb.getBlock());
+
+    RandomAccessFile f = new RandomAccessFile(parityFile, "rw");
+    f.seek(f.length() - 1);
+    byte val = f.readByte();
+    val++;
+    f.seek(f.length() - 1);
+    f.write(val);
+    f.close();
+
+    try {
+      conf.setBoolean(ECValidatorConfigKeys.ECVALIDATOR_VERIFY_CHECKSUMS, false);
+      ECFileValidator validator = new ECFileValidator(conf);
+
+      ValidationReport report = validator.validate("/ecfiles/ecFile", true);
+      assertEquals(true, report.isHealthy());
+
+      report = validator.validate("/ecfiles/ecFile", false);
+      assertEquals(false, report.isHealthy());
+
+      // first block is corrupt
+      assertEquals(blocks.get(0).getBlock().getLocalBlock().toString(), report.corruptBlockGroups().get(0).block());
+      // At the second stripe
+      assertEquals(2, report.corruptBlockGroups().get(0).stripesChecked());
+      // Second block is valid
+      assertEquals(blocks.get(1).getBlock().getLocalBlock().toString(), report.validBlockGroups().get(0).block());
+    } finally {
+      conf.setBoolean(ECValidatorConfigKeys.ECVALIDATOR_VERIFY_CHECKSUMS,
+          ECValidatorConfigKeys.ECVALIDATOR_VERIFY_CHECKSUMS_DEFAULT);
+    }
   }
 
 
