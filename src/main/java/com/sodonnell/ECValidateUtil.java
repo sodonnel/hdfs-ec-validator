@@ -1,6 +1,7 @@
 package com.sodonnell;
 
 import java.nio.ByteBuffer;
+import java.util.Arrays;
 
 public class ECValidateUtil {
 
@@ -8,7 +9,6 @@ public class ECValidateUtil {
     ByteBuffer[] buf = new ByteBuffer[count];
     for (int i=0; i<count; i++) {
       buf[i] = ByteBuffer.allocate(ofSize);
-      buf[i].mark();
     }
     return buf;
   }
@@ -17,5 +17,16 @@ public class ECValidateUtil {
     for (ByteBuffer b : buf) {
       b.position(toPosition);
     }
+  }
+
+  public static void zeroBuffers(ByteBuffer[] buf) {
+    for (ByteBuffer b : buf) {
+      zeroBuffer(b);
+    }
+  }
+
+  public static void zeroBuffer(ByteBuffer buf) {
+    Arrays.fill(buf.array(), (byte)0);
+    buf.position(0);
   }
 }
