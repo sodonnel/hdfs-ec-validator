@@ -27,6 +27,6 @@ public class ECValidateUtil {
 
   public static void zeroBuffer(ByteBuffer buf) {
     Arrays.fill(buf.array(), (byte)0);
-    buf.position(0);
+    buf.clear();
   }
 }

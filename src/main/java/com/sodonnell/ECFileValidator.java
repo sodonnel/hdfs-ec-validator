@@ -62,6 +62,7 @@ public class ECFileValidator {
     LocatedBlocks fileBlocks = client.getNamenode().getBlockLocations(src, 0, stat.getLen());
     ErasureCodingPolicy ecPolicy = fileBlocks.getErasureCodingPolicy();
 
+    ByteBuffer[] stripe = null;
     for (LocatedBlock b : fileBlocks.getLocatedBlocks()) {
       LOG.info("checking block {} of size {}", b.getBlock(), b.getBlockSize());
       LocatedStripedBlock sb = (LocatedStripedBlock)b;
@@ -69,8 +70,12 @@ public class ECFileValidator {
         int stripeNum = 0;
         boolean corrupt = false;
         while(true) {
-          ByteBuffer[] stripe = ECValidateUtil.allocateBuffers(
-              ecPolicy.getNumDataUnits() + ecPolicy.getNumParityUnits(), ecPolicy.getCellSize());
+          if (stripe == null) {
+            stripe = ECValidateUtil.allocateBuffers(
+                ecPolicy.getNumDataUnits() + ecPolicy.getNumParityUnits(), ecPolicy.getCellSize());
+          } else {
+            ECValidateUtil.zeroBuffers(stripe);
+          }
           if (br.readNextStripe(stripe) == 0) {
             break;
           }
