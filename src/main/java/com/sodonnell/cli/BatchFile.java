@@ -40,19 +40,21 @@ public class BatchFile {
     }
 
     Configuration conf = new Configuration();
-    ECFileValidator validator = new ECFileValidator(conf);
-    String l;
-    while ((l = br.readLine()) != null)   {
-      // Print the content on the console
-      try {
-        ValidationReport res = validator.validate(l, true);
-        if (res.isHealthy()) {
-          out.println("healthy " + l);
-        } else {
-          out.println("corrupt " + l + " " + StringUtils.join(res.corruptBlockGroups(), ","));
+
+    try (ECFileValidator validator = new ECFileValidator(conf)) {
+      String l;
+      while ((l = br.readLine()) != null) {
+        // Print the content on the console
+        try {
+          ValidationReport res = validator.validate(l, true);
+          if (res.isHealthy()) {
+            out.println("healthy " + l);
+          } else {
+            out.println("corrupt " + l + " " + StringUtils.join(res.corruptBlockGroups(), ","));
+          }
+        } catch (Exception e) {
+          out.println("failed " + l + " " + e.getMessage());
         }
-      } catch (Exception e) {
-        out.println("failed " + l + " " + e.getMessage());
       }
     }
     br.close();

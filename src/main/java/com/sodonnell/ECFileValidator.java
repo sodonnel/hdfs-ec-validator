@@ -15,13 +15,14 @@ import org.apache.hadoop.hdfs.protocol.LocatedStripedBlock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.Closeable;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-public class ECFileValidator {
+public class ECFileValidator implements Closeable {
 
   Logger LOG = LoggerFactory.getLogger(ECFileValidator.class);
   private Configuration conf;
@@ -34,6 +35,11 @@ public class ECFileValidator {
     fs = FileSystem.get(conf);
     client = new DFSClient(fs.getUri(), conf);
     createExecutor();
+  }
+
+  @Override
+  public void close() throws IOException {
+    executor.shutdown();
   }
 
   private void createExecutor() throws IOException {
@@ -100,18 +106,19 @@ public class ECFileValidator {
 
   public static void main(String[] args) throws Exception {
     Configuration conf = new Configuration();
-    ECFileValidator validator = new ECFileValidator(conf);
 
-    for (String f : args) {
-      try {
-        ValidationReport res = validator.validate(f, true);
-        if (res.isHealthy()) {
-          System.out.println("healthy " + f);
-        } else {
-          System.out.println("corrupt " + f + " " + StringUtils.join(res.corruptBlockGroups(), ","));
+    try (ECFileValidator validator = new ECFileValidator(conf)) {
+      for (String f : args) {
+        try {
+          ValidationReport res = validator.validate(f, true);
+          if (res.isHealthy()) {
+            System.out.println("healthy " + f);
+          } else {
+            System.out.println("corrupt " + f + " " + StringUtils.join(res.corruptBlockGroups(), ","));
+          }
+        } catch (Exception e) {
+          System.out.println("failed " + f + " " + e.getMessage());
         }
-      } catch (Exception e) {
-        System.out.println("failed " + f + " " + e.getMessage());
       }
     }
   }
