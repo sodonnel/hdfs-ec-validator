@@ -61,7 +61,6 @@ public class StripedBlockReader implements AutoCloseable {
         block, ecPolicy.getCellSize(), ecPolicy.getNumDataUnits(), ecPolicy.getNumParityUnits());
     ensureAllBlocksPresent();
     blockReaders = new BlockReader[ecPolicy.getNumDataUnits() + ecPolicy.getNumParityUnits()];
-    ensureAllBlocksPresent();
   }
 
   public void close() {
