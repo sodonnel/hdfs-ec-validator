@@ -13,10 +13,31 @@ public class ECValidateUtil {
     return buf;
   }
 
+  public static void clearBuffers(ByteBuffer[] buf) {
+    for (ByteBuffer b : buf) {
+      b.clear();
+    }
+  }
+
+  public static void flipBuffers(ByteBuffer[] buf) {
+    for (ByteBuffer b : buf) {
+      b.flip();
+    }
+  }
+
   public static void resetBufferPosition(ByteBuffer[] buf, int toPosition) {
     for (ByteBuffer b : buf) {
       b.position(toPosition);
     }
+  }
+
+  public static void padBufferToLimit(ByteBuffer buf, int limit) {
+    int pos = buf.position();
+    if (pos >= limit) {
+      return;
+    }
+    Arrays.fill(buf.array(), pos, limit, (byte)0);
+    buf.position(limit);
   }
 
   public static void zeroBuffers(ByteBuffer[] buf) {

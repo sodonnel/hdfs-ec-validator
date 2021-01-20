@@ -80,7 +80,7 @@ public class ECFileValidator implements Closeable {
             stripe = ECValidateUtil.allocateBuffers(
                 ecPolicy.getNumDataUnits() + ecPolicy.getNumParityUnits(), ecPolicy.getCellSize());
           } else {
-            ECValidateUtil.zeroBuffers(stripe);
+            ECValidateUtil.clearBuffers(stripe);
           }
           if (br.readNextStripe(stripe) == 0) {
             break;
