@@ -24,7 +24,6 @@ HDFS stores up to 128MB of data in each data block of the block group, but it en
 
 ## TODO
 
-* Read the data from the datanodes in parallel
 * Currently, only the parity is generated from the data blocks. Allow for all combinations to be checked as mentioned above.
 * Provide a map-reduce job to allow many files to be checked in parallel across the cluster.
 
@@ -47,7 +46,7 @@ Compile the project - the tests will take a minute or two to run:
 mvn package
 ```
 
-Take the result jar file `target/ECValidator-1.0-SNAPSHOT.jar` and copy to a node on the Hadoop cluster.
+Take the resulting jar file `target/ECValidator-1.0-SNAPSHOT.jar` and copy to a node on the Hadoop cluster.
 
 Set the classpath:
 
@@ -68,4 +67,61 @@ Kinit if the cluster is secure, and then run the tool:
 ...
 21/01/11 21:10:43 INFO sodonnell.ECFileValidator: checking block BP-191582629-172.27.74.136-1610382327645:blk_-9223372036854775456_2908 of size 16777216
 The file is valid
+```
+
+The general usage is:
+
+```
+/usr/java/jdk1.8.0_141-cloudera/bin/java com.sodonnell.ECFileValidator <space seperated list of files>
+```
+
+There is also a batch mode, which takes a file as input and writes the results to stdout or an output file:
+
+```
+/usr/java/jdk1.8.0_141-cloudera/bin/java com.sodonnell.cli.BatchFile inputFile <optional_output_file>
+```
+
+The output looks like the following:
+
+```
+<healthy|corrupt|failed> <file path> <corrupt block groups or any error message>
+Eg:
+healthy /ecfiles/test1
+corrupt /ecfiles/test2 blk_-9223372036854775440_5746
+failed /ecfiles/test5 File /ecfiles/test5 does not exist
+healthy /ecfiles/test3
+failed /ecfiles/test4 Data block in position 0 of block BP-191582629-172.27.74.136-1610382327645:blk_-9223372036854774736_5791 is unavailable
+```
+
+## Map Reduce
+
+To check many files, you can use a map reduce job. This job will partition all files under the given directories into a number of input files, searching the directories recursively. The job will start a mapper per generated input file and check the files in parallel.
+
+The usage instructions are:
+
+```
+hadoop jar ECValidator-1.0-SNAPSHOT.jar com.sodonnell.mapred.ValidateFiles stagingDir outputDir numSplits <one or more directories to check>
+
+eg
+
+hadoop jar ECValidator-1.0-SNAPSHOT.jar com.sodonnell.mapred.ValidateFiles ecstage ecoutput 5 /ecfiles
+```
+
+The output looks like the following, under the output directory:
+
+```
+# hadoop fs -cat ecoutput/part-r-00000
+corrupt	/ecfiles/test2 blk_-9223372036854775440_5746
+failed	/ecfiles/notecreally File /ecfiles/notecreally is not erasure coded
+failed	/ecfiles/test4 Data block in position 0 of block BP-191582629-172.27.74.136-1610382327645:blk_-9223372036854774736_5791 is unavailable
+healthy	/ecfiles/copy3/copy2/notecreally
+healthy	/ecfiles/copy3/test4
+healthy	/ecfiles/copy3/test2
+healthy	/ecfiles/copy3/notecreally
+healthy	/ecfiles/copy3/copy2/test4
+healthy	/ecfiles/copy3/copy2/test2
+healthy	/ecfiles/copy3/copy2/copy1/test4
+healthy	/ecfiles/copy3/copy1/test4
+healthy	/ecfiles/copy2/test4
+healthy	/ecfiles/copy2/test2
 ```
