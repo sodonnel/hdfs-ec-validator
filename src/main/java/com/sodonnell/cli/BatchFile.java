@@ -4,6 +4,8 @@ import com.sodonnell.ECFileValidator;
 import com.sodonnell.ValidationReport;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.conf.Configuration;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -12,6 +14,8 @@ import java.io.InputStreamReader;
 import java.io.PrintStream;
 
 public class BatchFile {
+
+  private static Logger LOG = LoggerFactory.getLogger(BatchFile.class);
 
   public static void main(String[] args) throws Exception {
     // Expect one or two arguments:
@@ -57,6 +61,7 @@ public class BatchFile {
             out.println("corrupt " + l + " " + StringUtils.join(res.corruptBlockGroups(), ",") + zeroParity);
           }
         } catch (Exception e) {
+          LOG.debug("Failed to read file {}", l, e);
           out.println("failed " + l + " " + e.getClass().toString() + ":" + e.getMessage());
         }
       }

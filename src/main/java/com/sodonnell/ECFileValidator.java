@@ -24,7 +24,7 @@ import java.util.concurrent.Executors;
 
 public class ECFileValidator implements Closeable {
 
-  Logger LOG = LoggerFactory.getLogger(ECFileValidator.class);
+  private static Logger LOG = LoggerFactory.getLogger(ECFileValidator.class);
   private Configuration conf;
   private DFSClient client;
   private FileSystem fs;
@@ -128,6 +128,7 @@ public class ECFileValidator implements Closeable {
             System.out.println("corrupt " + f + " " + StringUtils.join(res.corruptBlockGroups(), ",") + zeroParity);
           }
         } catch (Exception e) {
+          LOG.debug("Failed to read file {}", f, e);
           System.out.println("failed " + f + " " + e.getClass().toString() + ":" + e.getMessage());
         }
       }
