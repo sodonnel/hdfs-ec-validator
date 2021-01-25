@@ -44,15 +44,19 @@ public class ValidateFilesMapper extends Mapper<LongWritable, Text, Text, Text> 
     try {
        path = value.toString();
       ValidationReport res = ecFileValidator.validate(path, true);
+      String zeroParity = "" ;
+      if (res.isParityAllZero()) {
+        zeroParity = " zeroParityBlockGroups " + StringUtils.join(res.parityAllZeroBlockGroups(), ",");
+      }
       if (res.isHealthy()) {
-        message.set(path);
+        message.set(path + zeroParity);
         context.write(healthy, message);
       } else {
-        message.set(path + " " + StringUtils.join(res.corruptBlockGroups(), ","));
+        message.set(path + " " + StringUtils.join(res.corruptBlockGroups(), ",") + zeroParity);
         context.write(corrupt, message);
       }
     } catch (Exception e) {
-      message.set(path + " " + e.getMessage());
+      message.set(path + " " + e.getClass().toString() + ":" + e.getMessage());
       context.write(failed, message);
     }
   }

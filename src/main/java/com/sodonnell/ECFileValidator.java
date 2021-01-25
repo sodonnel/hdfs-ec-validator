@@ -75,6 +75,7 @@ public class ECFileValidator implements Closeable {
       try (StripedBlockReader br = new StripedBlockReader(client, conf, sb, ecPolicy, executor)) {
         int stripeNum = 0;
         boolean corrupt = false;
+        boolean zeroParity = true;
         while(true) {
           if (stripe == null) {
             stripe = ECValidateUtil.allocateBuffers(
@@ -86,6 +87,9 @@ public class ECFileValidator implements Closeable {
             break;
           }
           stripeNum ++;
+          if (ECChecker.allZeroParity(stripe, ecPolicy) == 0) {
+            zeroParity = false;
+          }
           if (!ECChecker.validateParity(stripe, ecPolicy)) {
             corrupt = true;
             break;
@@ -93,6 +97,9 @@ public class ECFileValidator implements Closeable {
           if (checkOnlyFirstStripe) {
             break;
           }
+        }
+        if (zeroParity) {
+          report.addZeroParityBlockGroup(b.getBlock().getLocalBlock().toString(), stripeNum);
         }
         if (corrupt) {
           report.addCorruptBlockGroup(b.getBlock().getLocalBlock().toString(), stripeNum);
@@ -111,13 +118,17 @@ public class ECFileValidator implements Closeable {
       for (String f : args) {
         try {
           ValidationReport res = validator.validate(f, true);
+          String zeroParity = "" ;
+          if (res.isParityAllZero()) {
+            zeroParity = " zeroParityBlockGroups " + StringUtils.join(res.parityAllZeroBlockGroups(), ",");
+          }
           if (res.isHealthy()) {
-            System.out.println("healthy " + f);
+            System.out.println("healthy " + f + zeroParity);
           } else {
-            System.out.println("corrupt " + f + " " + StringUtils.join(res.corruptBlockGroups(), ","));
+            System.out.println("corrupt " + f + " " + StringUtils.join(res.corruptBlockGroups(), ",") + zeroParity);
           }
         } catch (Exception e) {
-          System.out.println("failed " + f + " " + e.getMessage());
+          System.out.println("failed " + f + " " + e.getClass().toString() + ":" + e.getMessage());
         }
       }
     }

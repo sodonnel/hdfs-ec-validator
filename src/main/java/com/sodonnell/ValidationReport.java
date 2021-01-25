@@ -9,6 +9,7 @@ public class ValidationReport {
 
   private final List<Entry> validBlockGroups = new ArrayList<>();
   private final List<Entry> corruptBlockGroups = new ArrayList<>();
+  private final List<Entry> zeroParityGroups = new ArrayList<>();
 
   public void addCorruptBlockGroup(String blkGroup, int stripesChecked) {
     corruptBlockGroups.add(new Entry(blkGroup, stripesChecked));
@@ -16,6 +17,10 @@ public class ValidationReport {
 
   public void addValidBlockGroup(String blkGroup, int stripesChecked) {
     validBlockGroups.add(new Entry(blkGroup, stripesChecked));
+  }
+
+  public void addZeroParityBlockGroup(String blkGroup, int stripesChecked) {
+    zeroParityGroups.add(new Entry(blkGroup, stripesChecked));
   }
 
   public List<Entry> validBlockGroups() {
@@ -26,12 +31,20 @@ public class ValidationReport {
     return UnmodifiableList.decorate(corruptBlockGroups);
   }
 
+  public List<Entry> parityAllZeroBlockGroups() {
+    return UnmodifiableList.decorate(zeroParityGroups);
+  }
+
   public boolean isCorrupt() {
     return corruptBlockGroups.size() > 0;
   }
 
   public boolean isHealthy() {
     return corruptBlockGroups.size() == 0;
+  }
+
+  public boolean isParityAllZero() {
+    return zeroParityGroups.size() != 0;
   }
 
   public static class Entry {

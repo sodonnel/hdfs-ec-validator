@@ -59,6 +59,44 @@ public class ECChecker {
   }
 
   /**
+   * Check to see if any of the parity buffers contain only zero bytes for their entire length.
+   * Return the number of parity buffers found to contain only zero bytes.
+   * This method expects the buffer position to be at its limit, as if it had just be read
+   * from the channel. On completion, the position will be at the limit.
+   * @param buf
+   * @param ecPolicy
+   * @return
+   * @throws IOException
+   */
+  public static int allZeroParity(ByteBuffer[] buf, ErasureCodingPolicy ecPolicy)
+      throws IOException {
+    return allZeroParity(buf, ecPolicy.getNumDataUnits(), ecPolicy.getNumParityUnits(), ecPolicy.getCellSize());
+  }
+
+  public static int allZeroParity(ByteBuffer[] buf, int dataNum, int parityNum, int cellSize)
+      throws IOException {
+    validateBuffers(buf, dataNum, parityNum, cellSize);
+    int zeroCount = 0;
+    for (int i=dataNum; i<dataNum+parityNum; i++) {
+      ByteBuffer b = buf[i];
+      b.flip();
+      boolean hasContent = false;
+      while (b.hasRemaining()) {
+        if ((byte)0 != b.get()) {
+          hasContent = true;
+          b.position(b.limit());
+          break;
+        }
+      }
+      if (!hasContent) {
+        zeroCount++;
+      }
+    }
+    return zeroCount;
+  }
+
+
+  /**
    * Given a list of buffers representing some EC data, it is assumed the buffers have been filled
    * via a read from the datasource, and the buffer positions indicate what was read.
    *

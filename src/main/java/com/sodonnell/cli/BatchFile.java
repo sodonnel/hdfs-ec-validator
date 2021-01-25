@@ -47,13 +47,17 @@ public class BatchFile {
         // Print the content on the console
         try {
           ValidationReport res = validator.validate(l, true);
+          String zeroParity = "" ;
+          if (res.isParityAllZero()) {
+            zeroParity = " zeroParityBlockGroups " + StringUtils.join(res.parityAllZeroBlockGroups(), ",");
+          }
           if (res.isHealthy()) {
-            out.println("healthy " + l);
+            out.println("healthy " + l + zeroParity);
           } else {
-            out.println("corrupt " + l + " " + StringUtils.join(res.corruptBlockGroups(), ","));
+            out.println("corrupt " + l + " " + StringUtils.join(res.corruptBlockGroups(), ",") + zeroParity);
           }
         } catch (Exception e) {
-          out.println("failed " + l + " " + e.getMessage());
+          out.println("failed " + l + " " + e.getClass().toString() + ":" + e.getMessage());
         }
       }
     }

@@ -78,6 +78,34 @@ public class TestECChecker {
   }
 
   @Test
+  public void testAllZeroParity() throws IOException {
+    ByteBuffer[] stripe = ECValidateUtil.allocateBuffers(dataUnits + parityUnits, cellSize);
+    fillBuffersWithRandom(stripe);
+    assertEquals(0, ECChecker.allZeroParity(stripe, dataUnits, parityUnits, cellSize));
+    for (int i=dataUnits; i<dataUnits+parityUnits; i++) {
+      assertEquals(stripe[i].limit(), stripe[i].position());
+    }
+
+    // Zero the second parity buffer
+    ByteBuffer secondParity = stripe[dataUnits+1];
+    ECValidateUtil.zeroBuffer(secondParity);
+    secondParity.position(secondParity.limit());
+    assertEquals(1, ECChecker.allZeroParity(stripe, dataUnits, parityUnits, cellSize));
+    for (int i=dataUnits; i<dataUnits+parityUnits; i++) {
+      assertEquals(stripe[i].limit(), stripe[i].position());
+    }
+
+    // Zero the third parity buffer
+    ByteBuffer thirdParity = stripe[dataUnits+2];
+    ECValidateUtil.zeroBuffer(thirdParity);
+    thirdParity.position(thirdParity.limit());
+    assertEquals(2, ECChecker.allZeroParity(stripe, dataUnits, parityUnits, cellSize));
+    for (int i=dataUnits; i<dataUnits+parityUnits; i++) {
+      assertEquals(stripe[i].limit(), stripe[i].position());
+    }
+  }
+
+  @Test
   public void testValidateBuffers() throws Exception {
     ByteBuffer[] stripe = ECValidateUtil.allocateBuffers(dataUnits + parityUnits, cellSize);
     fillBuffersWithRandom(stripe);

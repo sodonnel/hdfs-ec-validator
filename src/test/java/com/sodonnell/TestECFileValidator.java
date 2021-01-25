@@ -170,11 +170,6 @@ public class TestECFileValidator {
     int bytes = ecPolicy.getNumDataUnits() * ecPolicy.getCellSize() * 3;
     createFileOfLength(ecFile, bytes);
 
-    // When corrupting the parity, you need to ensure the correct checksums go into the
-    // meta file. Therefore the easiest way to corrupt it, is to copy another block of
-    // the same size in its place - ie the first datablock. So we find the location of
-    // the first parity, and the first datablock and then copy the datablock over the
-    // parity.
     LocatedBlocks blocks = client.getNamenode().getBlockLocations("/ecfiles/ecFile", 0, bytes);
     LocatedStripedBlock blockGroup = (LocatedStripedBlock) blocks.getLocatedBlocks().get(0);
     final LocatedBlock[] blks = StripedBlockUtil.parseStripedBlockGroup(
@@ -216,6 +211,96 @@ public class TestECFileValidator {
     }
   }
 
+  @Test
+  public void testCorruptionWithZeroParity() throws Exception {
+    //  Not enough replicas was chosen. Reason: {NODE_TOO_BUSY=2}
+    Path ecFile = new Path(ecRoot, "ecFile");
+
+    // write 3 full stripes - that will be two blocks (block size of 2MB)
+    int bytes = ecPolicy.getNumDataUnits() * ecPolicy.getCellSize() * 3;
+    createFileOfLength(ecFile, bytes);
+
+    LocatedBlocks blocks = client.getNamenode().getBlockLocations("/ecfiles/ecFile", 0, bytes);
+    LocatedStripedBlock blockGroup = (LocatedStripedBlock) blocks.getLocatedBlocks().get(0);
+    final LocatedBlock[] blks = StripedBlockUtil.parseStripedBlockGroup(
+        blockGroup, ecPolicy.getCellSize(), ecPolicy.getNumDataUnits(), ecPolicy.getNumParityUnits());
+
+    LocatedBlock parityLb = blks[ecPolicy.getNumDataUnits()+1];
+    int DNPort = parityLb.getLocations()[0].getIpcPort();
+    int DNIndex = findDNIndex(DNPort);
+
+    File parityFile = cluster.getBlockFile(DNIndex, parityLb.getBlock());
+
+    // Zero the first stripe of the parity
+    RandomAccessFile f = new RandomAccessFile(parityFile, "rw");
+    f.seek(0);
+    for (int i=0; i< ecPolicy.getCellSize(); i++) {
+      f.write((byte)0);
+    }
+    f.close();
+
+    try {
+      conf.setBoolean(ECValidatorConfigKeys.ECVALIDATOR_VERIFY_CHECKSUMS, false);
+      ECFileValidator validator = new ECFileValidator(conf);
+
+      // As the first stripe is corrupt, even though parity is non-zero in later stripes
+      // that will never get checked.
+      ValidationReport report = validator.validate("/ecfiles/ecFile", false);
+      assertEquals(false, report.isHealthy());
+      assertEquals(true, report.isParityAllZero());
+
+    } finally {
+      conf.setBoolean(ECValidatorConfigKeys.ECVALIDATOR_VERIFY_CHECKSUMS,
+          ECValidatorConfigKeys.ECVALIDATOR_VERIFY_CHECKSUMS_DEFAULT);
+    }
+  }
+
+  @Test
+  public void testCorruptionWithFileOfZeros() throws Exception {
+    //  Not enough replicas was chosen. Reason: {NODE_TOO_BUSY=2}
+    Path ecFile = new Path(ecRoot, "ecFile");
+
+    // write 3 full stripes - that will be two blocks (block size of 2MB)
+    int bytes = ecPolicy.getNumDataUnits() * ecPolicy.getCellSize() * 3;
+    createFileOfZeros(ecFile, bytes);
+
+    LocatedBlocks blocks = client.getNamenode().getBlockLocations("/ecfiles/ecFile", 0, bytes);
+    LocatedStripedBlock blockGroup = (LocatedStripedBlock) blocks.getLocatedBlocks().get(0);
+    final LocatedBlock[] blks = StripedBlockUtil.parseStripedBlockGroup(
+        blockGroup, ecPolicy.getCellSize(), ecPolicy.getNumDataUnits(), ecPolicy.getNumParityUnits());
+
+    LocatedBlock parityLb = blks[ecPolicy.getNumDataUnits()+1];
+    int DNPort = parityLb.getLocations()[0].getIpcPort();
+    int DNIndex = findDNIndex(DNPort);
+
+    File parityFile = cluster.getBlockFile(DNIndex, parityLb.getBlock());
+
+    // Zero add some non-zero in the second stripe of the parity
+    RandomAccessFile f = new RandomAccessFile(parityFile, "rw");
+    f.seek(ecPolicy.getCellSize());
+    f.write((byte)1);
+    f.close();
+
+    try {
+      conf.setBoolean(ECValidatorConfigKeys.ECVALIDATOR_VERIFY_CHECKSUMS, false);
+      ECFileValidator validator = new ECFileValidator(conf);
+
+      // First stripe should be valid, but parity is reported as zeros
+      ValidationReport report = validator.validate("/ecfiles/ecFile", true);
+      assertEquals(true, report.isHealthy());
+      assertEquals(true, report.isParityAllZero());
+
+      // Second stripe is corrupt, parity still all zeros as the other parity blocks
+      // will have zeros in them.
+      report = validator.validate("/ecfiles/ecFile", false);
+      assertEquals(false, report.isHealthy());
+      assertEquals(true, report.isParityAllZero());
+    } finally {
+      conf.setBoolean(ECValidatorConfigKeys.ECVALIDATOR_VERIFY_CHECKSUMS,
+          ECValidatorConfigKeys.ECVALIDATOR_VERIFY_CHECKSUMS_DEFAULT);
+    }
+  }
+
 
   private int findDNIndex(int ipcPort) throws Exception {
     int i = 0;
@@ -234,6 +319,18 @@ public class TestECFileValidator {
       stream = fs.create(dest);
       for (int i = 0; i < bytes; i++) {
         stream.write(RandomUtils.nextBytes(1));
+      }
+    } finally {
+      stream.close();
+    }
+  }
+
+  private void createFileOfZeros(Path dest, int bytes) throws IOException {
+    FSDataOutputStream stream = null;
+    try {
+      stream = fs.create(dest);
+      for (int i = 0; i < bytes; i++) {
+        stream.write((byte)0);
       }
     } finally {
       stream.close();
