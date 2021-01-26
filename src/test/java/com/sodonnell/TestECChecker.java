@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 
 import static junit.framework.TestCase.assertEquals;
+import static junit.framework.TestCase.assertFalse;
 import static junit.framework.TestCase.assertTrue;
 import static junit.framework.TestCase.fail;
 
@@ -81,7 +82,7 @@ public class TestECChecker {
   public void testAllZeroParity() throws IOException {
     ByteBuffer[] stripe = ECValidateUtil.allocateBuffers(dataUnits + parityUnits, cellSize);
     fillBuffersWithRandom(stripe);
-    assertEquals(0, ECChecker.allZeroParity(stripe, dataUnits, parityUnits, cellSize));
+    assertEquals(parityUnits, ECChecker.getNonZeroParityIndicies(stripe, dataUnits, parityUnits, cellSize).size());
     for (int i=dataUnits; i<dataUnits+parityUnits; i++) {
       assertEquals(stripe[i].limit(), stripe[i].position());
     }
@@ -90,7 +91,9 @@ public class TestECChecker {
     ByteBuffer secondParity = stripe[dataUnits+1];
     ECValidateUtil.zeroBuffer(secondParity);
     secondParity.position(secondParity.limit());
-    assertEquals(1, ECChecker.allZeroParity(stripe, dataUnits, parityUnits, cellSize));
+    assertTrue(ECChecker.getNonZeroParityIndicies(stripe, dataUnits, parityUnits, cellSize).contains(dataUnits));
+    assertFalse(ECChecker.getNonZeroParityIndicies(stripe, dataUnits, parityUnits, cellSize).contains(dataUnits + 1));
+    assertTrue(ECChecker.getNonZeroParityIndicies(stripe, dataUnits, parityUnits, cellSize).contains(dataUnits + 2));
     for (int i=dataUnits; i<dataUnits+parityUnits; i++) {
       assertEquals(stripe[i].limit(), stripe[i].position());
     }
@@ -99,7 +102,9 @@ public class TestECChecker {
     ByteBuffer thirdParity = stripe[dataUnits+2];
     ECValidateUtil.zeroBuffer(thirdParity);
     thirdParity.position(thirdParity.limit());
-    assertEquals(2, ECChecker.allZeroParity(stripe, dataUnits, parityUnits, cellSize));
+    assertTrue(ECChecker.getNonZeroParityIndicies(stripe, dataUnits, parityUnits, cellSize).contains(dataUnits));
+    assertFalse(ECChecker.getNonZeroParityIndicies(stripe, dataUnits, parityUnits, cellSize).contains(dataUnits + 1));
+    assertFalse(ECChecker.getNonZeroParityIndicies(stripe, dataUnits, parityUnits, cellSize).contains(dataUnits + 2));
     for (int i=dataUnits; i<dataUnits+parityUnits; i++) {
       assertEquals(stripe[i].limit(), stripe[i].position());
     }

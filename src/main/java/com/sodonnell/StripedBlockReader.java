@@ -63,6 +63,10 @@ public class StripedBlockReader implements AutoCloseable {
     blockReaders = new BlockReader[ecPolicy.getNumDataUnits() + ecPolicy.getNumParityUnits()];
   }
 
+  public LocatedBlock getBlockAtIndex(int i) {
+    return locatedBlocks[i];
+  }
+
   public void close() {
     for (BlockReader r : blockReaders) {
       try {

@@ -19,6 +19,8 @@ import java.io.Closeable;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -75,7 +77,7 @@ public class ECFileValidator implements Closeable {
       try (StripedBlockReader br = new StripedBlockReader(client, conf, sb, ecPolicy, executor)) {
         int stripeNum = 0;
         boolean corrupt = false;
-        boolean zeroParity = true;
+        Set<Integer> nonZeroParityIndicies = new HashSet<>();
         while(true) {
           if (stripe == null) {
             stripe = ECValidateUtil.allocateBuffers(
@@ -87,8 +89,8 @@ public class ECFileValidator implements Closeable {
             break;
           }
           stripeNum ++;
-          if (ECChecker.allZeroParity(stripe, ecPolicy) == 0) {
-            zeroParity = false;
+          if (nonZeroParityIndicies.size() < ecPolicy.getNumParityUnits()) {
+            nonZeroParityIndicies.addAll(ECChecker.getNonZeroParityIndicies(stripe, ecPolicy));
           }
           if (!ECChecker.validateParity(stripe, ecPolicy)) {
             corrupt = true;
@@ -98,8 +100,9 @@ public class ECFileValidator implements Closeable {
             break;
           }
         }
-        if (zeroParity) {
-          report.addZeroParityBlockGroup(b.getBlock().getLocalBlock().toString(), stripeNum);
+        if (nonZeroParityIndicies.size() < ecPolicy.getNumParityUnits()) {
+          String details = getZeroParityBlocks(br, ecPolicy, nonZeroParityIndicies);
+          report.addZeroParityBlockGroup(b.getBlock().getLocalBlock().toString(), stripeNum, details);
         }
         if (corrupt) {
           report.addCorruptBlockGroup(b.getBlock().getLocalBlock().toString(), stripeNum);
@@ -109,6 +112,25 @@ public class ECFileValidator implements Closeable {
       }
     }
     return report;
+  }
+
+  private String getZeroParityBlocks(StripedBlockReader sb, ErasureCodingPolicy ecPolicy, Set<Integer> nonZeroIndicies) {
+    StringBuilder bldr = new StringBuilder();
+    boolean first = true;
+    for (int i=ecPolicy.getNumDataUnits(); i<ecPolicy.getNumDataUnits() + ecPolicy.getNumParityUnits(); i++) {
+      if (!nonZeroIndicies.contains(i)) {
+        if (first) {
+          first = false;
+          bldr.append("{");
+        } else {
+          bldr.append("|");
+        }
+        LocatedBlock block = sb.getBlockAtIndex(i);
+        block.getBlock().getLocalBlock().appendStringTo(bldr);
+      }
+    }
+    bldr.append("}");
+    return bldr.toString();
   }
 
   public static void main(String[] args) throws Exception {

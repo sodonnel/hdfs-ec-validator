@@ -19,8 +19,8 @@ public class ValidationReport {
     validBlockGroups.add(new Entry(blkGroup, stripesChecked));
   }
 
-  public void addZeroParityBlockGroup(String blkGroup, int stripesChecked) {
-    zeroParityGroups.add(new Entry(blkGroup, stripesChecked));
+  public void addZeroParityBlockGroup(String blkGroup, int stripesChecked, String details) {
+    zeroParityGroups.add(new Entry(blkGroup, stripesChecked, details));
   }
 
   public List<Entry> validBlockGroups() {
@@ -51,10 +51,17 @@ public class ValidationReport {
 
     private String block;
     private int stripesChecked;
+    private String details = null;
 
     public Entry(String block, int stripesChecked) {
       this.block = block;
       this.stripesChecked = stripesChecked;
+    }
+
+    public Entry(String block, int stripesChecked, String details) {
+      this.block = block;
+      this.stripesChecked = stripesChecked;
+      this.details = details;
     }
 
     public String block() {
@@ -65,8 +72,15 @@ public class ValidationReport {
       return stripesChecked;
     }
 
+    public String details() {
+      return details;
+    }
+
     @Override
     public String toString() {
+      if (details != null) {
+        return block + " " + details;
+      }
       return block;
     }
 

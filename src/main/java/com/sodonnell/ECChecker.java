@@ -7,6 +7,10 @@ import org.apache.hadoop.io.erasurecode.rawcoder.RSRawEncoder;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 
 public class ECChecker {
 
@@ -68,31 +72,28 @@ public class ECChecker {
    * @return
    * @throws IOException
    */
-  public static int allZeroParity(ByteBuffer[] buf, ErasureCodingPolicy ecPolicy)
+  public static Set<Integer> getNonZeroParityIndicies(ByteBuffer[] buf, ErasureCodingPolicy ecPolicy)
       throws IOException {
-    return allZeroParity(buf, ecPolicy.getNumDataUnits(), ecPolicy.getNumParityUnits(), ecPolicy.getCellSize());
+    return getNonZeroParityIndicies(buf, ecPolicy.getNumDataUnits(), ecPolicy.getNumParityUnits(), ecPolicy.getCellSize());
   }
 
-  public static int allZeroParity(ByteBuffer[] buf, int dataNum, int parityNum, int cellSize)
+  public static Set<Integer> getNonZeroParityIndicies(ByteBuffer[] buf, int dataNum, int parityNum, int cellSize)
       throws IOException {
     validateBuffers(buf, dataNum, parityNum, cellSize);
-    int zeroCount = 0;
+    Set<Integer> nonZeroIndicies = new HashSet<>();
     for (int i=dataNum; i<dataNum+parityNum; i++) {
       ByteBuffer b = buf[i];
       b.flip();
       boolean hasContent = false;
       while (b.hasRemaining()) {
         if ((byte)0 != b.get()) {
-          hasContent = true;
+          nonZeroIndicies.add(i);
           b.position(b.limit());
           break;
         }
       }
-      if (!hasContent) {
-        zeroCount++;
-      }
     }
-    return zeroCount;
+    return nonZeroIndicies;
   }
 
 
