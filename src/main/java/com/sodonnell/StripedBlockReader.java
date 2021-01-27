@@ -48,6 +48,7 @@ public class StripedBlockReader implements AutoCloseable {
   private final ErasureCodingPolicy ecPolicy;
   private final ExecutorService executor;
   private final BlockReader[] blockReaders;
+  private final int readTimout;
 
   public StripedBlockReader(DFSClient dfsClient, Configuration conf, LocatedStripedBlock block,
       ErasureCodingPolicy ecPolicy, ExecutorService executor) throws IOException {
@@ -61,6 +62,9 @@ public class StripedBlockReader implements AutoCloseable {
         block, ecPolicy.getCellSize(), ecPolicy.getNumDataUnits(), ecPolicy.getNumParityUnits());
     ensureAllBlocksPresent();
     blockReaders = new BlockReader[ecPolicy.getNumDataUnits() + ecPolicy.getNumParityUnits()];
+
+    this.readTimout = conf.getInt(ECValidatorConfigKeys.ECVALIDATOR_READ_TIMEOUT,
+        ECValidatorConfigKeys.ECVALIDATOR_READ_TIMEOUT_DEFAULT);
   }
 
   public LocatedBlock getBlockAtIndex(int i) {
@@ -132,12 +136,13 @@ public class StripedBlockReader implements AutoCloseable {
         // If any future returns zero, then the return value will be zero.
         // Only when all futures return -1, should we return -1.
         // TODO - should we timeout here, or rely on the underlying HDFS Client timeouts?
-        int read = f.get(10, TimeUnit.SECONDS);
+        int read = f.get(readTimout, TimeUnit.SECONDS);
         if (read > 0) {
           totalRead += read;
         }
       } catch (TimeoutException e) {
         f.cancel(true);
+        LOG.error("Timeout attempting to read block. Pending read count {}", pendingReads.size());
         throw e;
       } catch (InterruptedException e) {
         throw e;
