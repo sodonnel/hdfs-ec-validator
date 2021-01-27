@@ -95,14 +95,27 @@ failed /ecfiles/test4 Data block in position 0 of block BP-191582629-172.27.74.1
 
 ## Map Reduce
 
-To check many files, you can use a map reduce job. This job will partition all files under the given directories into a number of input files, searching the directories recursively. The job will start a mapper per generated input file and check the files in parallel.
+To check many files, you can use a map reduce job. This job will partition all files found within the given input paths or input file across a number of split files. The split files are stored in the given stage directory.
+
+The job will start a mapper per generated split and check the files in parallel, writing a single output file into the output folder.
+
+You can pass a list of input directories, which will be searched recursively for files to check.
+
+If you have a large list of specific files to check saved in a file, with one file to check per line, you can pass the input file to the job instead of, or as well as the input paths.
 
 The usage instructions are:
 
 ```
-hadoop jar ECValidator-1.0-SNAPSHOT.jar com.sodonnell.mapred.ValidateFiles stagingDir outputDir numSplits <one or more directories to check>
+usage: com.sodonnell.mapred.ValidateFiles
+ -f,--inputfile <arg>   Input file containing all paths to check
+ -i,--inputdir <arg>    An input directory of files to process recursively
+ -m,--mappers <arg>     Number of mappers to use in the job
+ -o,--outputdir <arg>   Directory to write the results in
+ -s,--stagedir <arg>    Staging directory to create split files
 
-eg
+Eg
+
+hadoop jar ECValidator-1.0-SNAPSHOT.jar com.sodonnell.mapred.ValidateFiles stagingDir outputDir numSplits <one or more directories to check>
 
 hadoop jar ECValidator-1.0-SNAPSHOT.jar com.sodonnell.mapred.ValidateFiles ecstage ecoutput 5 /ecfiles
 ```
@@ -125,3 +138,5 @@ healthy	/ecfiles/copy3/copy1/test4
 healthy	/ecfiles/copy2/test4
 healthy	/ecfiles/copy2/test2
 ```
+
+If you have a large cluster, you can set the number of mappers to a value much higher than 5, eg 20 to 50. 

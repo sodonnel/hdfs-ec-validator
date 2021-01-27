@@ -7,7 +7,10 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.List;
+import java.util.stream.Stream;
 
 public class FileListing {
 
@@ -27,8 +30,11 @@ public class FileListing {
     outputHandles = new FSDataOutputStream[this.splits];
   }
 
-  public int generateListing() throws IOException {
+  public int generateListing(String inputPath) throws IOException {
     createOutputs();
+    if (inputPath != null) {
+      addInputPath(inputPath);
+    }
     for (String s : srcPaths) {
       Path sourcePath = new Path(s);
       generateSubListing(sourcePath);
@@ -44,9 +50,25 @@ public class FileListing {
         generateSubListing(new Path(root, f.getPath().getName()));
       } else {
         String path = root.toUri().getPath()+"/"+f.getPath().getName();
-        outputHandles[(fileCount++)%splits].writeBytes(path + System.lineSeparator());
+        writePathToOutput(path);
       }
     }
+  }
+
+  private void addInputPath(String inputPath) throws IOException {
+    try (Stream<String> stream = Files.lines(Paths.get(inputPath))) {
+      stream.forEach(l -> {
+        try {
+          writePathToOutput(l);
+        } catch (IOException e) {
+          throw new RuntimeException(e);
+        }
+      });
+    }
+  }
+
+  private void writePathToOutput(String path) throws IOException {
+    outputHandles[(fileCount++)%splits].writeBytes(path + System.lineSeparator());
   }
 
   private void createOutputs() throws IOException {
