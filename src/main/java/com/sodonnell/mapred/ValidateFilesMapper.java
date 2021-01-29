@@ -1,22 +1,18 @@
 package com.sodonnell.mapred;
 
 import com.sodonnell.ECFileValidator;
-import com.sodonnell.ValidationReport;
-import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.io.LongWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Mapper;
 
 import java.io.IOException;
+import java.util.Iterator;
 
-public class ValidateFilesMapper extends Mapper<LongWritable, Text, Text, Text> {
+public class ValidateFilesMapper extends Mapper<LongWritable, Text, Text, BlockReport> {
+
+  static final String FILE_FAIL_BLOCK = "fileFailed";
 
   ECFileValidator ecFileValidator = null;
-  Text message = new Text();
-  Text healthy = new Text("healthy");
-  Text corrupt = new Text("corrupt");
-  Text failed = new Text("failed");
-
 
   @Override
   public void setup(Context context) {
@@ -42,22 +38,16 @@ public class ValidateFilesMapper extends Mapper<LongWritable, Text, Text, Text> 
       throws IOException, InterruptedException {
     String path = null;
     try {
-       path = value.toString();
-      ValidationReport res = ecFileValidator.validate(path, true);
-      String zeroParity = "" ;
-      if (res.isParityAllZero()) {
-        zeroParity = " zeroParityBlockGroups " + StringUtils.join(res.parityAllZeroBlockGroups(), ",");
-      }
-      if (res.isHealthy()) {
-        message.set(path + zeroParity);
-        context.write(healthy, message);
-      } else {
-        message.set(path + " " + StringUtils.join(res.corruptBlockGroups(), ",") + zeroParity);
-        context.write(corrupt, message);
+      path = value.toString();
+      Iterator<BlockReport> itr = ecFileValidator.validateBlocks(path, true);
+      while (itr.hasNext()) {
+        context.write(value, itr.next());
       }
     } catch (Exception e) {
-      message.set(path + " " + e.getClass().toString() + ":" + e.getMessage());
-      context.write(failed, message);
+      context.write(value, new BlockReport()
+          .setBlockGroup(FILE_FAIL_BLOCK)
+          .setFailed(true)
+          .setMessage(e.getClass().toString()+ " " + e.getMessage()));
     }
   }
 

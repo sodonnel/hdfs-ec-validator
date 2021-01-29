@@ -1,6 +1,7 @@
 package com.sodonnell;
 
 import com.sodonnell.exceptions.NotErasureCodedException;
+import com.sodonnell.mapred.BlockReport;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
@@ -20,6 +21,8 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.HashSet;
+import java.util.Iterator;
+import java.util.NoSuchElementException;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -55,7 +58,7 @@ public class ECFileValidator implements Closeable {
     executor = Executors.newFixedThreadPool(threads);
   }
 
-  public ValidationReport validate(String src, boolean checkOnlyFirstStripe) throws Exception {
+  public Iterator<BlockReport> validateBlocks(String src, boolean checkOnlyFirstStripe) throws Exception {
     Path file = new Path(src);
     if (!fs.exists(file)) {
       throw new FileNotFoundException("File "+src+" does not exist");
@@ -65,51 +68,96 @@ public class ECFileValidator implements Closeable {
       throw new NotErasureCodedException("File "+src+" is not erasure coded");
     }
 
-    LOG.info("Going to validate {}", src);
-    ValidationReport report = new ValidationReport();
     LocatedBlocks fileBlocks = client.getNamenode().getBlockLocations(src, 0, stat.getLen());
     ErasureCodingPolicy ecPolicy = fileBlocks.getErasureCodingPolicy();
 
-    ByteBuffer[] stripe = null;
-    for (LocatedBlock b : fileBlocks.getLocatedBlocks()) {
-      LOG.info("checking block {} of size {}", b.getBlock(), b.getBlockSize());
-      LocatedStripedBlock sb = (LocatedStripedBlock)b;
-      try (StripedBlockReader br = new StripedBlockReader(client, conf, sb, ecPolicy, executor)) {
-        int stripeNum = 0;
-        boolean corrupt = false;
-        Set<Integer> nonZeroParityIndicies = new HashSet<>();
-        while(true) {
-          if (stripe == null) {
-            stripe = ECValidateUtil.allocateBuffers(
-                ecPolicy.getNumDataUnits() + ecPolicy.getNumParityUnits(), ecPolicy.getCellSize());
-          } else {
-            ECValidateUtil.clearBuffers(stripe);
-          }
-          if (br.readNextStripe(stripe) == 0) {
-            break;
-          }
-          stripeNum ++;
-          if (nonZeroParityIndicies.size() < ecPolicy.getNumParityUnits()) {
-            nonZeroParityIndicies.addAll(ECChecker.getNonZeroParityIndicies(stripe, ecPolicy));
-          }
-          if (!ECChecker.validateParity(stripe, ecPolicy)) {
-            corrupt = true;
-            break;
-          }
-          if (checkOnlyFirstStripe) {
-            break;
+    LOG.info("Going to validate {} with {} blocks", src, fileBlocks.getLocatedBlocks().size());
+    ByteBuffer[] stripe = ECValidateUtil.allocateBuffers(
+        ecPolicy.getNumDataUnits() + ecPolicy.getNumParityUnits(), ecPolicy.getCellSize());
+
+    final Iterator<LocatedBlock> blockItr = fileBlocks.getLocatedBlocks().iterator();
+
+    return new Iterator<BlockReport>() {
+      @Override
+      public boolean hasNext()
+      {
+        return blockItr.hasNext();
+      }
+
+      @Override
+      public BlockReport next()
+      {
+        if (hasNext())
+        {
+          LocatedStripedBlock sb = (LocatedStripedBlock)blockItr.next();
+          try {
+            return processBlock(sb, ecPolicy, checkOnlyFirstStripe, stripe);
+          } catch (Exception e) {
+            return new BlockReport()
+                .setBlockGroup(sb.getBlock().getLocalBlock().toString())
+                .setFailed(true)
+                .setMessage(e.getClass().getSimpleName() + " " + e.getMessage());
           }
         }
+        throw new NoSuchElementException("No more blocks available");
+      }
+
+      @Override
+      public void remove()
+      {
+        throw new UnsupportedOperationException("Removals are not supported");
+      }};
+  }
+
+  public ValidationReport validate(String src, boolean checkOnlyFirstStripe) throws Exception {
+    Iterator<BlockReport> validateBlocks = validateBlocks(src, checkOnlyFirstStripe);
+    ValidationReport report = new ValidationReport();
+
+    while (validateBlocks.hasNext()) {
+      BlockReport blockReport = validateBlocks.next();
+      if (blockReport.hasZeroParity()) {
+        report.addZeroParityBlockGroup(blockReport.blockGroup(), blockReport.stripesChecked(), blockReport.message());
+      }
+      if (blockReport.isCorrupt()) {
+        report.addCorruptBlockGroup(blockReport.blockGroup(), blockReport.stripesChecked());
+      } else {
+        report.addValidBlockGroup(blockReport.blockGroup(), blockReport.stripesChecked());
+      }
+    }
+    return report;
+  }
+
+  private BlockReport processBlock(LocatedStripedBlock sb, ErasureCodingPolicy ecPolicy, boolean checkOnlyFirstStripe,
+      ByteBuffer[] stripe) throws Exception {
+    BlockReport report = new BlockReport();
+    report.setBlockGroup(sb.getBlock().getLocalBlock().toString());
+
+    try (StripedBlockReader br = new StripedBlockReader(client, conf, sb, ecPolicy, executor)) {
+      int stripeNum = 0;
+      Set<Integer> nonZeroParityIndicies = new HashSet<>();
+      while(true) {
+        ECValidateUtil.clearBuffers(stripe);
+        if (br.readNextStripe(stripe) == 0) {
+          break;
+        }
+        stripeNum ++;
         if (nonZeroParityIndicies.size() < ecPolicy.getNumParityUnits()) {
-          String details = getZeroParityBlocks(br, ecPolicy, nonZeroParityIndicies);
-          report.addZeroParityBlockGroup(b.getBlock().getLocalBlock().toString(), stripeNum, details);
+          nonZeroParityIndicies.addAll(ECChecker.getNonZeroParityIndicies(stripe, ecPolicy));
         }
-        if (corrupt) {
-          report.addCorruptBlockGroup(b.getBlock().getLocalBlock().toString(), stripeNum);
-        } else {
-          report.addValidBlockGroup(b.getBlock().getLocalBlock().toString(), stripeNum);
+        if (!ECChecker.validateParity(stripe, ecPolicy)) {
+          report.setIsCorrupt(true);
+          break;
+        }
+        if (checkOnlyFirstStripe) {
+          break;
         }
       }
+      if (nonZeroParityIndicies.size() < ecPolicy.getNumParityUnits()) {
+        String details = getZeroParityBlocks(br, ecPolicy, nonZeroParityIndicies);
+        report.setHasZeroParity(true);
+        report.setMessage(details);
+      }
+      report.setStripesChecked(stripeNum);
     }
     return report;
   }
