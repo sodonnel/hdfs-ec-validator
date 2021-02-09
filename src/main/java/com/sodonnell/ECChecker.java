@@ -131,7 +131,7 @@ public class ECChecker {
     for (int i=1; i<dataNum; i++) {
       if (dataLimit < cellsize && buf[i].position() > 0) {
         throw new MisalignedBuffersException(
-            "Data buffer at index " + i + " should have zero bytes as the buffer at index 0 is less than the cell size");
+            "Data buffer at index " + i + " should have zero bytes as the buffer at index " + (i - 1) + " is less than the cell size");
       }
       dataLimit = buf[i].position();
     }
