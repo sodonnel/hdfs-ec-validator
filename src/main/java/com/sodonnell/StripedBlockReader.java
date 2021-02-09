@@ -195,7 +195,8 @@ public class StripedBlockReader implements AutoCloseable {
     }
     for (int i=expectedDataBlocks; i<ecPolicy.getNumDataUnits(); i++) {
       if (locatedBlocks[i] != null) {
-        throw new UnExpectedBlockException("Data block in position " + i + " of block " + block.getBlock() + " is present, but should not be");
+        throw new UnExpectedBlockException("Data block in position " + i + " of block " + block.getBlock() + " of length "
+            + block.getBlockSize() + " is present, but should not be");
       }
     }
   }
