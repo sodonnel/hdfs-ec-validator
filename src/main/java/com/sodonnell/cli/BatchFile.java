@@ -1,6 +1,7 @@
 package com.sodonnell.cli;
 
 import com.sodonnell.ECFileValidator;
+import com.sodonnell.ECValidatorConfigKeys;
 import com.sodonnell.ValidationReport;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.conf.Configuration;
@@ -45,6 +46,9 @@ public class BatchFile {
 
     Configuration conf = new Configuration();
 
+    String fs = conf.get(ECValidatorConfigKeys.ECVALIDATOR_FIELD_SEPARATOR_KEY,
+        ECValidatorConfigKeys.ECVALIDATOR_FIELD_SEPARATOR_DEFAULT);
+
     try (ECFileValidator validator = new ECFileValidator(conf)) {
       String l;
       while ((l = br.readLine()) != null) {
@@ -53,16 +57,20 @@ public class BatchFile {
           ValidationReport res = validator.validate(l, true);
           String zeroParity = "" ;
           if (res.isParityAllZero()) {
-            zeroParity = " zeroParityBlockGroups " + StringUtils.join(res.parityAllZeroBlockGroups(), ",");
+            zeroParity = "zeroParityBlockGroups " + StringUtils.join(res.parityAllZeroBlockGroups(), ",");
           }
           if (res.isHealthy()) {
-            out.println("healthy " + l + zeroParity);
+            out.println("healthy" + fs + l + fs + zeroParity);
           } else {
-            out.println("corrupt " + l + " " + StringUtils.join(res.corruptBlockGroups(), ",") + zeroParity);
+            String msg = StringUtils.join(res.corruptBlockGroups(), ",");
+            if (zeroParity != "") {
+              msg = msg + " " + zeroParity;
+            }
+            out.println("corrupt" + fs + l + fs + msg);
           }
         } catch (Exception e) {
           LOG.debug("Failed to read file {}", l, e);
-          out.println("failed " + l + " " + e.getClass().toString() + ":" + e.getMessage());
+          out.println("failed" + fs + l + fs + e.getClass().getSimpleName() + ":" + e.getMessage());
         }
       }
     }

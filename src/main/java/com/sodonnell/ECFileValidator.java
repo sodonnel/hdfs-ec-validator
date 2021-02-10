@@ -183,6 +183,8 @@ public class ECFileValidator implements Closeable {
 
   public static void main(String[] args) throws Exception {
     Configuration conf = new Configuration();
+    String fs = conf.get(ECValidatorConfigKeys.ECVALIDATOR_FIELD_SEPARATOR_KEY,
+        ECValidatorConfigKeys.ECVALIDATOR_FIELD_SEPARATOR_DEFAULT);
 
     try (ECFileValidator validator = new ECFileValidator(conf)) {
       for (String f : args) {
@@ -190,16 +192,20 @@ public class ECFileValidator implements Closeable {
           ValidationReport res = validator.validate(f, true);
           String zeroParity = "" ;
           if (res.isParityAllZero()) {
-            zeroParity = " zeroParityBlockGroups " + StringUtils.join(res.parityAllZeroBlockGroups(), ",");
+            zeroParity = "zeroParityBlockGroups " + StringUtils.join(res.parityAllZeroBlockGroups(), ",");
           }
           if (res.isHealthy()) {
-            System.out.println("healthy " + f + zeroParity);
+            System.out.println("healthy" + fs + f + fs + zeroParity);
           } else {
-            System.out.println("corrupt " + f + " " + StringUtils.join(res.corruptBlockGroups(), ",") + zeroParity);
+            String msg = StringUtils.join(res.corruptBlockGroups(), ",");
+            if (zeroParity != "") {
+              msg = msg + " " + zeroParity;
+            }
+            System.out.println("corrupt" + fs + f + fs + msg);
           }
         } catch (Exception e) {
           LOG.debug("Failed to read file {}", f, e);
-          System.out.println("failed " + f + " " + e.getClass().toString() + ":" + e.getMessage());
+          System.out.println("failed" + fs + f + fs + e.getClass().getSimpleName() + ":" + e.getMessage());
         }
       }
     }

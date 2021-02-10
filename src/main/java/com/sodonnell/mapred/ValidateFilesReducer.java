@@ -1,6 +1,8 @@
 package com.sodonnell.mapred;
 
+import com.sodonnell.ECValidatorConfigKeys;
 import org.apache.commons.lang.StringUtils;
+import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Reducer;
 
@@ -15,6 +17,15 @@ public class ValidateFilesReducer extends Reducer<Text, BlockReport, Text, Text>
   private Text healthy = new Text("healthy");
 
   private Text message = new Text();
+
+  private String fs = null;
+
+  @Override
+  public void setup(Context context) throws IOException, InterruptedException {
+    Configuration conf = context.getConfiguration();
+    fs = conf.get(ECValidatorConfigKeys.ECVALIDATOR_FIELD_SEPARATOR_KEY,
+        ECValidatorConfigKeys.ECVALIDATOR_FIELD_SEPARATOR_DEFAULT);
+  }
 
   public void reduce(Text text, Iterable<BlockReport> values, Context context)
       throws IOException, InterruptedException {
@@ -43,40 +54,40 @@ public class ValidateFilesReducer extends Reducer<Text, BlockReport, Text, Text>
       }
     }
 
+    String file = text.toString();
     StringBuilder sb = new StringBuilder();
-    sb.append(text.toString());
     if (firstFailureReason != null) {
-      sb.append(" " + firstFailureReason);
+      sb.append(firstFailureReason);
     }
 
     if (fileFailure) {
-      context.write(failed, new Text(sb.toString()));
+      context.write(failed, new Text(file + fs + sb.toString()));
       return;
     }
 
-    if (corruptBlocks.size() > 0) {
-      sb.append(" corrupt block groups {");
-      sb.append(StringUtils.join(corruptBlocks, ","));
-      sb.append("}");
-    }
-    if (zeroParity.size() > 0) {
-      sb.append(" zero parity block groups {");
-      sb.append(StringUtils.join(zeroParity, ","));
-      sb.append("}");
-    }
-    if (failedBlocks.size() > 0) {
-      sb.append(" failed block groups {");
-      sb.append(StringUtils.join(failedBlocks, ","));
-      sb.append("}");
-    }
+    appendBlocksWithMessage(sb, "corrupt block groups", corruptBlocks);
+    appendBlocksWithMessage(sb, "zero parity block groups", zeroParity);
+    appendBlocksWithMessage(sb, "failed block groups", failedBlocks);
 
     if (failedBlocks.size() > 0) {
-      context.write(failed, new Text(sb.toString()));
+      context.write(failed, new Text(file + fs + sb.toString()));
     } else if (corruptBlocks.size() > 0) {
-      context.write(corrupt, new Text(sb.toString()));
+      context.write(corrupt, new Text(file + fs + sb.toString()));
     } else {
-      context.write(healthy, text);
+      context.write(healthy, new Text(file + fs));
     }
+  }
+
+  private void appendBlocksWithMessage(StringBuilder sb, String msg, List<String> blocks) {
+    if (blocks.size() == 0) {
+      return;
+    }
+    if (sb.length() > 0) {
+      sb.append(" ");
+    }
+    sb.append(msg + " {");
+    sb.append(StringUtils.join(blocks, ","));
+    sb.append("}");
   }
 
 }

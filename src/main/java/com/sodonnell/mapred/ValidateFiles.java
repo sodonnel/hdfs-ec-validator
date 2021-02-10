@@ -1,5 +1,6 @@
 package com.sodonnell.mapred;
 
+import com.sodonnell.ECValidatorConfigKeys;
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.GnuParser;
 import org.apache.commons.cli.HelpFormatter;
@@ -123,6 +124,10 @@ public class ValidateFiles extends Configured implements Tool {
     } else {
       LOG.info("Found {} files to check", fileCount);
     }
+
+    String fieldSeparator = conf.get(ECValidatorConfigKeys.ECVALIDATOR_FIELD_SEPARATOR_KEY,
+        ECValidatorConfigKeys.ECVALIDATOR_FIELD_SEPARATOR_DEFAULT);
+    conf.set(TextOutputFormat.SEPARATOR, fieldSeparator);
 
     // Create job
     Job job = Job.getInstance(conf, "EC-File-Validator");
