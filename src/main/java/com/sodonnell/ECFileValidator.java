@@ -2,7 +2,6 @@ package com.sodonnell;
 
 import com.sodonnell.exceptions.NotErasureCodedException;
 import com.sodonnell.mapred.BlockReport;
-import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
@@ -97,6 +96,7 @@ public class ECFileValidator implements Closeable {
             return new BlockReport()
                 .setBlockGroup(sb.getBlock().getLocalBlock().toString())
                 .setFailed(true)
+                .setStripesChecked(0)
                 .setMessage(e.getClass().getSimpleName() + " " + e.getMessage());
           }
         }
@@ -107,15 +107,21 @@ public class ECFileValidator implements Closeable {
       public void remove()
       {
         throw new UnsupportedOperationException("Removals are not supported");
-      }};
+      }
+    };
   }
 
   public ValidationReport validate(String src, boolean checkOnlyFirstStripe) throws Exception {
     Iterator<BlockReport> validateBlocks = validateBlocks(src, checkOnlyFirstStripe);
-    ValidationReport report = new ValidationReport();
+    ValidationReport report = new ValidationReport(src);
 
     while (validateBlocks.hasNext()) {
       BlockReport blockReport = validateBlocks.next();
+      // If a block group is failed, then we don't check for corrupt / zero parity etc.
+      if (blockReport.failed()) {
+        report.addFailedBlockGroup(blockReport.blockGroup(), blockReport.stripesChecked(), blockReport.message());
+        continue;
+      }
       if (blockReport.hasZeroParity()) {
         report.addZeroParityBlockGroup(blockReport.blockGroup(), blockReport.stripesChecked(), blockReport.message());
       }
@@ -191,19 +197,7 @@ public class ECFileValidator implements Closeable {
       for (String f : args) {
         try {
           ValidationReport res = validator.validate(f, true);
-          String zeroParity = "" ;
-          if (res.isParityAllZero()) {
-            zeroParity = "zeroParityBlockGroups " + StringUtils.join(res.parityAllZeroBlockGroups(), ",");
-          }
-          if (res.isHealthy()) {
-            System.out.println("healthy" + fs + f + fs + zeroParity);
-          } else {
-            String msg = StringUtils.join(res.corruptBlockGroups(), ",");
-            if (zeroParity != "") {
-              msg = msg + " " + zeroParity;
-            }
-            System.out.println("corrupt" + fs + f + fs + msg);
-          }
+          System.out.println(res.formatReport(fs));
         } catch (Exception e) {
           LOG.debug("Failed to read file {}", f, e);
           System.out.println("failed" + fs + f + fs + e.getClass().getSimpleName() + ":" + e.getMessage());

@@ -3,7 +3,6 @@ package com.sodonnell.cli;
 import com.sodonnell.ECFileValidator;
 import com.sodonnell.ECValidatorConfigKeys;
 import com.sodonnell.ValidationReport;
-import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -55,19 +54,7 @@ public class BatchFile {
         // Print the content on the console
         try {
           ValidationReport res = validator.validate(l, true);
-          String zeroParity = "" ;
-          if (res.isParityAllZero()) {
-            zeroParity = "zeroParityBlockGroups " + StringUtils.join(res.parityAllZeroBlockGroups(), ",");
-          }
-          if (res.isHealthy()) {
-            out.println("healthy" + fs + l + fs + zeroParity);
-          } else {
-            String msg = StringUtils.join(res.corruptBlockGroups(), ",");
-            if (zeroParity != "") {
-              msg = msg + " " + zeroParity;
-            }
-            out.println("corrupt" + fs + l + fs + msg);
-          }
+          out.println(res.formatReport(fs));
         } catch (Exception e) {
           LOG.debug("Failed to read file {}", l, e);
           out.println("failed" + fs + l + fs + e.getClass().getSimpleName() + ":" + e.getMessage());

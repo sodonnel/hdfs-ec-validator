@@ -1,15 +1,26 @@
 package com.sodonnell;
 
 import org.apache.commons.collections.list.UnmodifiableList;
+import org.apache.commons.lang3.StringUtils;
 
 import java.util.ArrayList;
 import java.util.List;
 
 public class ValidationReport {
 
+  private final String path;
+  private final List<Entry> failedBlockGroups = new ArrayList<>();
   private final List<Entry> validBlockGroups = new ArrayList<>();
   private final List<Entry> corruptBlockGroups = new ArrayList<>();
   private final List<Entry> zeroParityGroups = new ArrayList<>();
+
+  public ValidationReport(String path) {
+    this.path = path;
+  }
+
+  public void addFailedBlockGroup(String blkGroup, int stripesChecked, String details) {
+    failedBlockGroups.add(new Entry(blkGroup, stripesChecked, details));
+  }
 
   public void addCorruptBlockGroup(String blkGroup, int stripesChecked) {
     corruptBlockGroups.add(new Entry(blkGroup, stripesChecked));
@@ -21,6 +32,10 @@ public class ValidationReport {
 
   public void addZeroParityBlockGroup(String blkGroup, int stripesChecked, String details) {
     zeroParityGroups.add(new Entry(blkGroup, stripesChecked, details));
+  }
+
+  public List<Entry> failedBlockGroups() {
+    return UnmodifiableList.decorate(failedBlockGroups);
   }
 
   public List<Entry> validBlockGroups() {
@@ -35,16 +50,49 @@ public class ValidationReport {
     return UnmodifiableList.decorate(zeroParityGroups);
   }
 
+  public boolean isFailed() {
+    return failedBlockGroups.size() > 0;
+  }
+
   public boolean isCorrupt() {
-    return corruptBlockGroups.size() > 0;
+    return corruptBlockGroups.size() > 0 && failedBlockGroups.size() == 0;
   }
 
   public boolean isHealthy() {
-    return corruptBlockGroups.size() == 0;
+    return corruptBlockGroups.size() == 0 && failedBlockGroups.size() == 0;
   }
 
   public boolean isParityAllZero() {
     return zeroParityGroups.size() != 0;
+  }
+
+  public String formatReport(String fs) {
+    StringBuilder sb = new StringBuilder();
+    String zeroParity = "" ;
+    if (isFailed()) {
+      sb.append("failed"+fs);
+      sb.append(path+fs);
+      sb.append("failed block groups {");
+      sb.append(StringUtils.join(failedBlockGroups(), ","));
+      sb.append("}");
+    } else {
+      if (isParityAllZero()) {
+        zeroParity = "zeroParityBlockGroups {" + StringUtils.join(parityAllZeroBlockGroups(), ",")+"}";
+      }
+      if (isHealthy()) {
+        sb.append("healthy" + fs + path + fs + zeroParity);
+      } else {
+        sb.append("corrupt" + fs + path + fs);
+        sb.append("corrupt block groups {");
+        sb.append(StringUtils.join(corruptBlockGroups(), ","));
+        sb.append("}");
+        if (zeroParity != "") {
+          sb.append(" ");
+          sb.append(zeroParity);
+        }
+      }
+    }
+    return sb.toString();
   }
 
   public static class Entry {
