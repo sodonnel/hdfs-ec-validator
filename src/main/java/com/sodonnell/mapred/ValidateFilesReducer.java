@@ -50,7 +50,7 @@ public class ValidateFilesReducer extends Reducer<Text, BlockReport, Text, Text>
         corruptBlocks.add(r.blockGroup());
       }
       if (r.hasZeroParity()) {
-        zeroParity.add(r.blockGroup());
+        zeroParity.add(r.blockGroup()+r.message());
       }
     }
 

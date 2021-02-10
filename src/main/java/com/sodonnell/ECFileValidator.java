@@ -93,6 +93,7 @@ public class ECFileValidator implements Closeable {
           try {
             return processBlock(sb, ecPolicy, checkOnlyFirstStripe, stripe);
           } catch (Exception e) {
+            LOG.warn("Failed processing {}", sb, e);
             return new BlockReport()
                 .setBlockGroup(sb.getBlock().getLocalBlock().toString())
                 .setFailed(true)
@@ -169,7 +170,7 @@ public class ECFileValidator implements Closeable {
       if (!nonZeroIndicies.contains(i)) {
         if (first) {
           first = false;
-          bldr.append("{");
+          bldr.append("[");
         } else {
           bldr.append("|");
         }
@@ -177,7 +178,7 @@ public class ECFileValidator implements Closeable {
         block.getBlock().getLocalBlock().appendStringTo(bldr);
       }
     }
-    bldr.append("}");
+    bldr.append("]");
     return bldr.toString();
   }
 
